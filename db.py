@@ -145,3 +145,23 @@ def atualizar_limite(usuario_id: int, forma_nome: str, novo_limite: float) -> bo
         .ilike("nome", f"%{forma_nome}%") \
         .execute()
     return len(res.data) > 0
+
+
+# ---------------------------------------------------------------------------
+# Parceiro (notificações)
+# ---------------------------------------------------------------------------
+
+def get_usuario(usuario_id: int):
+    res = supabase.table("usuarios").select("*").eq("id", usuario_id).execute()
+    return res.data[0] if res.data else None
+
+
+def get_parceiro_telefone(usuario_id: int):
+    res = supabase.table("usuarios").select("parceiro_telefone").eq("id", usuario_id).execute()
+    if res.data:
+        return res.data[0].get("parceiro_telefone")
+    return None
+
+
+def set_parceiro_telefone(usuario_id: int, telefone: str):
+    supabase.table("usuarios").update({"parceiro_telefone": telefone}).eq("id", usuario_id).execute()

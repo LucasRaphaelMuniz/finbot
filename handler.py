@@ -13,11 +13,15 @@ from difflib import SequenceMatcher
 
 from db import (
     get_or_create_usuario,
+    get_usuario,
     get_categorias,
     get_formas_pagamento,
     registrar_gasto,
     get_saldo_forma,
+    get_parceiro_telefone,
+    set_parceiro_telefone,
 )
+from notificar import enviar_notificacao
 from sessao import (
     get_sessao_ativa,
     criar_sessao,
@@ -64,6 +68,8 @@ def processar_mensagem(telefone: str, mensagem: str) -> str:
             return cmd_resumo(uid)
         if lower.startswith("limite "):
             return cmd_limite(uid, lower)
+        if lower.startswith("vincular "):
+            return _cmd_vincular(uid, lower)
 
         # ── Sessão ativa ────────────────────────────────────────────────────
         sessao = get_sessao_ativa(uid)
@@ -166,6 +172,8 @@ def _processar_sessao(uid: int, sessao: dict, mensagem: str) -> str:
 
 def _registrar_e_confirmar(uid: int, forma: dict, categoria: dict,
                             valor: float, descricao: str) -> str:
+    usuario = get_usuario(uid) or {}
+
     registrar_gasto(uid, forma["id"], categoria["id"], valor, descricao)
     saldo = get_saldo_forma(uid, forma["id"])
 
@@ -193,7 +201,33 @@ def _registrar_e_confirmar(uid: int, forma: dict, categoria: dict,
     else:
         linhas.append(f"💳 {forma_nome}: {_brl(gasto_mes)} gastos este mês")
 
+    # Notifica parceiro se configurado
+    parceiro = usuario.get("parceiro_telefone")
+    if parceiro:
+        nome_quem = usuario.get("nome") or usuario.get("telefone", "Sua parceira")
+        msg_notif = [f"🔔 *{nome_quem} registrou um gasto:*"]
+        msg_notif.append(f"💰 {_brl(valor)} — {cat_nome} — {forma_nome}")
+        if limite:
+            sobra = limite - gasto_mes
+            msg_notif.append(f"💳 {forma_nome}: {_brl(gasto_mes)} de {_brl(limite)} — sobram {_brl(sobra)}")
+        else:
+            msg_notif.append(f"💳 {forma_nome}: {_brl(gasto_mes)} gastos este mês")
+        enviar_notificacao(parceiro, "\n".join(msg_notif))
+
     return "\n".join(linhas)
+
+
+def _cmd_vincular(uid: int, lower: str) -> str:
+    partes = lower.split(None, 1)
+    if len(partes) < 2:
+        return "❌ Use: *vincular +5511999999999*"
+
+    telefone = partes[1].strip().replace(" ", "")
+    if not telefone.startswith("+"):
+        return "❌ Informe o número com código do país. Ex: *vincular +5511999999999*"
+
+    set_parceiro_telefone(uid, telefone)
+    return f"✅ Parceiro vinculado! Você será notificado quando {telefone} registrar gastos — e vice-versa se ele também vincular você."
 
 
 # ---------------------------------------------------------------------------
