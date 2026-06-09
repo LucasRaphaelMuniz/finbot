@@ -11,6 +11,8 @@ Fluxo:
 
 from difflib import SequenceMatcher
 
+import re
+
 from db import (
     get_or_create_usuario,
     get_usuario,
@@ -20,6 +22,11 @@ from db import (
     get_saldo_forma,
     get_parceiro_telefone,
     set_parceiro_telefone,
+    set_nome_usuario,
+    adicionar_forma_pagamento,
+    remover_forma_pagamento,
+    excluir_ultimo_gasto,
+    editar_ultimo_gasto_valor,
 )
 from notificar import enviar_notificacao
 from sessao import (
@@ -30,7 +37,7 @@ from sessao import (
     verificar_sessao_expirada,
 )
 from parser import extrair_valor, extrair_categoria, extrair_forma_pagamento
-from comandos import cmd_saldo, cmd_resumo, cmd_limite, cmd_ajuda
+from comandos import cmd_saldo, cmd_resumo, cmd_limite, cmd_ajuda, cmd_gastos
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +75,16 @@ def processar_mensagem(telefone: str, mensagem: str) -> str:
             return cmd_resumo(uid)
         if lower.startswith("limite "):
             return cmd_limite(uid, lower)
+        if lower == "gastos":
+            return cmd_gastos(uid)
+        if lower.startswith("excluir"):
+            return _cmd_excluir(uid, lower)
+        if lower.startswith("editar ultimo"):
+            return _cmd_editar_ultimo(uid, lower)
+        if lower.startswith("forma "):
+            return _cmd_forma(uid, lower)
+        if lower.startswith("apelido "):
+            return _cmd_apelido(uid, lower)
         if lower.startswith("vincular "):
             return _cmd_vincular(uid, lower)
 
@@ -172,7 +189,8 @@ def _processar_sessao(uid: int, sessao: dict, mensagem: str) -> str:
 
 def _registrar_e_confirmar(uid: int, forma: dict, categoria: dict,
                             valor: float, descricao: str) -> str:
-    usuario = get_usuario(uid) or {}
+    usuario    = get_usuario(uid) or {}
+    nome       = usuario.get("nome") or usuario.get("telefone", "")
 
     registrar_gasto(uid, forma["id"], categoria["id"], valor, descricao)
     saldo = get_saldo_forma(uid, forma["id"])
@@ -183,38 +201,102 @@ def _registrar_e_confirmar(uid: int, forma: dict, categoria: dict,
     cat_nome   = categoria["nome"] if categoria else "Outros"
 
     linhas = [
-        "✅ *Registrado!*",
+        f"✅ *Registrado por {nome}!*",
         f"💰 {_brl(valor)} — {cat_nome} — {forma_nome}",
+        f"💳 {forma_nome}",
     ]
 
     if limite:
         sobra = limite - gasto_mes
         pct   = (gasto_mes / limite) * 100
-        linhas.append(
-            f"💳 {forma_nome}: {_brl(gasto_mes)} gastos de {_brl(limite)} "
-            f"— sobram {_brl(sobra)}"
-        )
+        linhas.append(f"*Saldo Disponível: {_brl(sobra)}*")
+        linhas.append(f"Total: {_brl(gasto_mes)} gastos de {_brl(limite)}")
         if gasto_mes > limite:
             linhas.append(f"🚨 Limite do {forma_nome} ultrapassado!")
         elif pct >= 80:
             linhas.append(f"⚠️ Você já usou {pct:.0f}% do limite do {forma_nome}!")
     else:
-        linhas.append(f"💳 {forma_nome}: {_brl(gasto_mes)} gastos este mês")
+        linhas.append(f"Total: {_brl(gasto_mes)} gastos este mês")
 
-    # Notifica parceiro se configurado
     parceiro = usuario.get("parceiro_telefone")
     if parceiro:
-        nome_quem = usuario.get("nome") or usuario.get("telefone", "Sua parceira")
-        msg_notif = [f"🔔 *{nome_quem} registrou um gasto:*"]
-        msg_notif.append(f"💰 {_brl(valor)} — {cat_nome} — {forma_nome}")
+        msg_notif = [f"🔔 *{nome} registrou um gasto:*", f"💰 {_brl(valor)} — {cat_nome} — {forma_nome}", f"💳 {forma_nome}"]
         if limite:
             sobra = limite - gasto_mes
-            msg_notif.append(f"💳 {forma_nome}: {_brl(gasto_mes)} de {_brl(limite)} — sobram {_brl(sobra)}")
+            msg_notif.append(f"*Saldo Disponível: {_brl(sobra)}*")
+            msg_notif.append(f"Total: {_brl(gasto_mes)} gastos de {_brl(limite)}")
         else:
-            msg_notif.append(f"💳 {forma_nome}: {_brl(gasto_mes)} gastos este mês")
+            msg_notif.append(f"Total: {_brl(gasto_mes)} gastos este mês")
         enviar_notificacao(parceiro, "\n".join(msg_notif))
 
     return "\n".join(linhas)
+
+
+def _cmd_apelido(uid: int, lower: str) -> str:
+    partes = lower.split(None, 1)
+    if len(partes) < 2:
+        return "❌ Use: *apelido SeuNome*"
+    nome = partes[1].strip()
+    set_nome_usuario(uid, nome)
+    return f"✅ Nome atualizado para *{nome}*!"
+
+
+def _cmd_forma(uid: int, lower: str) -> str:
+    partes = lower.split(None, 2)
+    if len(partes) < 2:
+        return "❌ Use: *forma add Nome 1000* ou *forma remover Nome*"
+
+    acao = partes[1].lower()
+
+    if acao in ("add", "adicionar"):
+        if len(partes) < 3:
+            return "❌ Use: *forma add Nome 1000*"
+        tokens = partes[2].strip().rsplit(None, 1)
+        if len(tokens) == 2 and re.match(r"^\d+([.,]\d{1,2})?$", tokens[1]):
+            nome_forma = tokens[0].strip()
+            limite     = float(tokens[1].replace(",", "."))
+        else:
+            nome_forma = partes[2].strip()
+            limite     = None
+        adicionar_forma_pagamento(uid, nome_forma, limite)
+        limite_str = f" com limite de {_brl(limite)}" if limite else ""
+        return f"✅ Forma *{nome_forma}* adicionada{limite_str}!"
+
+    if acao in ("remover", "excluir", "deletar"):
+        if len(partes) < 3:
+            return "❌ Use: *forma remover Nome*"
+        nome_forma = partes[2].strip()
+        if remover_forma_pagamento(uid, nome_forma):
+            return f"✅ Forma *{nome_forma}* removida!"
+        return f"❌ Forma '{nome_forma}' não encontrada."
+
+    return "❌ Use: *forma add Nome 1000* ou *forma remover Nome*"
+
+
+def _cmd_excluir(uid: int, lower: str) -> str:
+    partes = lower.split()
+    if len(partes) < 2 or partes[1] != "ultimo":
+        return "❌ Use: *excluir ultimo*"
+    gasto = excluir_ultimo_gasto(uid)
+    if not gasto:
+        return "❌ Nenhum gasto registrado para excluir."
+    val   = _brl(float(gasto["valor"]))
+    cat   = gasto["categorias"]["nome"] if gasto.get("categorias") else "?"
+    forma = gasto["formas_pagamento"]["nome"] if gasto.get("formas_pagamento") else "?"
+    return f"🗑 *Excluído:* {val} — {cat} — {forma}"
+
+
+def _cmd_editar_ultimo(uid: int, lower: str) -> str:
+    partes = lower.split()
+    if len(partes) < 3:
+        return "❌ Use: *editar ultimo 45,90*"
+    try:
+        novo_valor = float(partes[2].replace(",", "."))
+    except ValueError:
+        return "❌ Valor inválido. Use: *editar ultimo 45,90*"
+    if editar_ultimo_gasto_valor(uid, novo_valor):
+        return f"✅ Último gasto atualizado para {_brl(novo_valor)}"
+    return "❌ Nenhum gasto registrado para editar."
 
 
 def _cmd_vincular(uid: int, lower: str) -> str:

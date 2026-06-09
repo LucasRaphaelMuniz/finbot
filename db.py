@@ -165,3 +165,68 @@ def get_parceiro_telefone(usuario_id: int):
 
 def set_parceiro_telefone(usuario_id: int, telefone: str):
     supabase.table("usuarios").update({"parceiro_telefone": telefone}).eq("id", usuario_id).execute()
+
+
+def set_nome_usuario(usuario_id: int, nome: str):
+    supabase.table("usuarios").update({"nome": nome}).eq("id", usuario_id).execute()
+
+
+# ---------------------------------------------------------------------------
+# Formas de pagamento — gerenciamento
+# ---------------------------------------------------------------------------
+
+def adicionar_forma_pagamento(usuario_id: int, nome: str, limite: float = None):
+    supabase.table("formas_pagamento").insert({
+        "usuario_id": usuario_id,
+        "nome": nome,
+        "limite_mensal": limite,
+    }).execute()
+
+
+def remover_forma_pagamento(usuario_id: int, nome_forma: str) -> bool:
+    res = supabase.table("formas_pagamento") \
+        .delete() \
+        .eq("usuario_id", usuario_id) \
+        .ilike("nome", f"%{nome_forma}%") \
+        .execute()
+    return len(res.data) > 0
+
+
+# ---------------------------------------------------------------------------
+# Gastos — gerenciamento
+# ---------------------------------------------------------------------------
+
+def get_ultimos_gastos(usuario_id: int, limit: int = 5):
+    return supabase.table("gastos") \
+        .select("id, valor, data, categorias(nome), formas_pagamento(nome)") \
+        .eq("usuario_id", usuario_id) \
+        .order("data", desc=True) \
+        .limit(limit) \
+        .execute().data
+
+
+def excluir_ultimo_gasto(usuario_id: int):
+    res = supabase.table("gastos") \
+        .select("id, valor, categorias(nome), formas_pagamento(nome)") \
+        .eq("usuario_id", usuario_id) \
+        .order("data", desc=True) \
+        .limit(1) \
+        .execute()
+    if not res.data:
+        return None
+    gasto = res.data[0]
+    supabase.table("gastos").delete().eq("id", gasto["id"]).execute()
+    return gasto
+
+
+def editar_ultimo_gasto_valor(usuario_id: int, novo_valor: float) -> bool:
+    res = supabase.table("gastos") \
+        .select("id") \
+        .eq("usuario_id", usuario_id) \
+        .order("data", desc=True) \
+        .limit(1) \
+        .execute()
+    if not res.data:
+        return False
+    supabase.table("gastos").update({"valor": novo_valor}).eq("id", res.data[0]["id"]).execute()
+    return True
