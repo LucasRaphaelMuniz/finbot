@@ -39,11 +39,38 @@ def _filtro_escopo(query, usuario_id: int, grupo_id):
 # Usuários
 # ---------------------------------------------------------------------------
 
+def _variantes_telefone(telefone: str) -> list:
+    """Variantes de número BR com/sem o nono dígito (whatsapp:+55DD9XXXXXXXX ↔ whatsapp:+55DDXXXXXXXX)."""
+    variantes = [telefone]
+    prefixo = "whatsapp:+55"
+    if telefone.startswith(prefixo):
+        resto = telefone[len(prefixo):]
+        if len(resto) == 11 and resto[2] == "9":
+            variantes.append(prefixo + resto[:2] + resto[3:])
+        elif len(resto) == 10:
+            variantes.append(prefixo + resto[:2] + "9" + resto[2:])
+    return variantes
+
+
+def buscar_usuario_por_telefone(telefone: str):
+    """Busca usuário pelo telefone exato ou pela variante BR com/sem nono dígito."""
+    for t in _variantes_telefone(telefone):
+        res = supabase.table("usuarios").select("*").eq("telefone", t).execute()
+        if res.data:
+            return res.data[0]
+    return None
+
+
 def get_or_create_usuario(telefone: str):
     """Retorna (usuario_dict, is_new). Cria formas de pagamento padrão no 1.º acesso."""
-    res = supabase.table("usuarios").select("*").eq("telefone", telefone).execute()
-    if res.data:
-        return res.data[0], False
+    usuario = buscar_usuario_por_telefone(telefone)
+    if usuario:
+        if usuario["telefone"] != telefone:
+            # Cadastro veio de "grupo add" com a variante do nono dígito;
+            # o From do Twilio é o endereço real para envio de notificações.
+            supabase.table("usuarios").update({"telefone": telefone}).eq("id", usuario["id"]).execute()
+            usuario["telefone"] = telefone
+        return usuario, False
 
     novo = supabase.table("usuarios").insert({"nome": telefone, "telefone": telefone}).execute().data[0]
     uid = novo["id"]
@@ -241,9 +268,8 @@ def adicionar_membro_grupo(grupo_id: int, telefone: str):
     Retorna (usuario, ja_estava_em_grupo). Membros novos não recebem formas
     padrão — passam a usar as contas do grupo.
     """
-    res = supabase.table("usuarios").select("*").eq("telefone", telefone).execute()
-    if res.data:
-        usuario = res.data[0]
+    usuario = buscar_usuario_por_telefone(telefone)
+    if usuario:
         if usuario.get("grupo_id"):
             return usuario, True
         supabase.table("usuarios").update({"grupo_id": grupo_id}).eq("id", usuario["id"]).execute()
