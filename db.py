@@ -22,6 +22,19 @@ def _inicio_mes() -> str:
     return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
 
 
+def _grupo_de(usuario_id: int):
+    """Retorna o grupo_id do usuário ou None."""
+    res = supabase.table("usuarios").select("grupo_id").eq("id", usuario_id).execute()
+    return res.data[0].get("grupo_id") if res.data else None
+
+
+def _filtro_escopo(query, usuario_id: int, grupo_id):
+    """Filtra pelo grupo (contas compartilhadas) ou, sem grupo, pelos dados pessoais."""
+    if grupo_id:
+        return query.eq("grupo_id", grupo_id)
+    return query.eq("usuario_id", usuario_id).is_("grupo_id", "null")
+
+
 # ---------------------------------------------------------------------------
 # Usuários
 # ---------------------------------------------------------------------------
@@ -54,7 +67,9 @@ def get_categorias():
 
 
 def get_formas_pagamento(usuario_id: int):
-    return supabase.table("formas_pagamento").select("*").eq("usuario_id", usuario_id).order("nome").execute().data
+    gid = _grupo_de(usuario_id)
+    q = supabase.table("formas_pagamento").select("*")
+    return _filtro_escopo(q, usuario_id, gid).order("nome").execute().data
 
 
 # ---------------------------------------------------------------------------
@@ -62,13 +77,14 @@ def get_formas_pagamento(usuario_id: int):
 # ---------------------------------------------------------------------------
 
 def registrar_gasto(usuario_id: int, forma_id: int, categoria_id: int,
-                    valor: float, descricao: str):
+                    valor: float, descricao: str, grupo_id: int = None):
     res = supabase.table("gastos").insert({
         "usuario_id": usuario_id,
         "forma_pagamento_id": forma_id,
         "categoria_id": categoria_id,
         "valor": valor,
         "descricao": descricao,
+        "grupo_id": grupo_id,
     }).execute()
     return res.data[0]
 
@@ -78,28 +94,29 @@ def registrar_gasto(usuario_id: int, forma_id: int, categoria_id: int,
 # ---------------------------------------------------------------------------
 
 def get_saldo_forma(usuario_id: int, forma_id: int):
-    """Retorna dict com gasto_mes, limite_mensal, nome."""
-    fp_res = supabase.table("formas_pagamento").select("*").eq("id", forma_id).eq("usuario_id", usuario_id).execute()
+    """Retorna dict com gasto_mes, limite_mensal, nome. Soma gastos de todo o grupo, se houver."""
+    gid = _grupo_de(usuario_id)
+    fp_res = supabase.table("formas_pagamento").select("*").eq("id", forma_id).execute()
     if not fp_res.data:
         return None
     fp = fp_res.data[0]
 
-    gastos = supabase.table("gastos").select("valor") \
+    q = supabase.table("gastos").select("valor") \
         .eq("forma_pagamento_id", forma_id) \
-        .eq("usuario_id", usuario_id) \
-        .gte("data", _inicio_mes()) \
-        .execute().data
+        .gte("data", _inicio_mes())
+    gastos = _filtro_escopo(q, usuario_id, gid).execute().data
 
     gasto_mes = sum(g["valor"] for g in gastos)
     return {"nome": fp["nome"], "limite_mensal": fp["limite_mensal"], "gasto_mes": gasto_mes}
 
 
 def get_saldo_todas_formas(usuario_id: int):
-    fps = supabase.table("formas_pagamento").select("*").eq("usuario_id", usuario_id).order("nome").execute().data
-    gastos = supabase.table("gastos").select("valor, forma_pagamento_id") \
-        .eq("usuario_id", usuario_id) \
-        .gte("data", _inicio_mes()) \
-        .execute().data
+    gid = _grupo_de(usuario_id)
+    fps = _filtro_escopo(supabase.table("formas_pagamento").select("*"), usuario_id, gid) \
+        .order("nome").execute().data
+    gastos = _filtro_escopo(
+        supabase.table("gastos").select("valor, forma_pagamento_id"), usuario_id, gid
+    ).gte("data", _inicio_mes()).execute().data
 
     gastos_por_forma: dict[int, float] = {}
     for g in gastos:
@@ -119,11 +136,11 @@ def get_saldo_todas_formas(usuario_id: int):
 # ---------------------------------------------------------------------------
 
 def get_resumo_mes(usuario_id: int):
-    gastos = supabase.table("gastos") \
+    gid = _grupo_de(usuario_id)
+    q = supabase.table("gastos") \
         .select("valor, categorias(nome), formas_pagamento(nome)") \
-        .eq("usuario_id", usuario_id) \
-        .gte("data", _inicio_mes()) \
-        .execute().data
+        .gte("data", _inicio_mes())
+    gastos = _filtro_escopo(q, usuario_id, gid).execute().data
 
     totais: dict[tuple, float] = {}
     for g in gastos:
@@ -139,11 +156,11 @@ def get_resumo_mes(usuario_id: int):
 # ---------------------------------------------------------------------------
 
 def atualizar_limite(usuario_id: int, forma_nome: str, novo_limite: float) -> bool:
-    res = supabase.table("formas_pagamento") \
+    gid = _grupo_de(usuario_id)
+    q = supabase.table("formas_pagamento") \
         .update({"limite_mensal": novo_limite}) \
-        .eq("usuario_id", usuario_id) \
-        .ilike("nome", f"%{forma_nome}%") \
-        .execute()
+        .ilike("nome", f"%{forma_nome}%")
+    res = _filtro_escopo(q, usuario_id, gid).execute()
     return len(res.data) > 0
 
 
@@ -180,16 +197,78 @@ def adicionar_forma_pagamento(usuario_id: int, nome: str, limite: float = None):
         "usuario_id": usuario_id,
         "nome": nome,
         "limite_mensal": limite,
+        "grupo_id": _grupo_de(usuario_id),
     }).execute()
 
 
 def remover_forma_pagamento(usuario_id: int, nome_forma: str) -> bool:
-    res = supabase.table("formas_pagamento") \
+    gid = _grupo_de(usuario_id)
+    q = supabase.table("formas_pagamento") \
         .delete() \
-        .eq("usuario_id", usuario_id) \
-        .ilike("nome", f"%{nome_forma}%") \
-        .execute()
+        .ilike("nome", f"%{nome_forma}%")
+    res = _filtro_escopo(q, usuario_id, gid).execute()
     return len(res.data) > 0
+
+
+# ---------------------------------------------------------------------------
+# Grupos (contas compartilhadas)
+# ---------------------------------------------------------------------------
+
+def get_grupo(grupo_id: int):
+    res = supabase.table("grupos").select("*").eq("id", grupo_id).execute()
+    return res.data[0] if res.data else None
+
+
+def get_membros_grupo(grupo_id: int):
+    return supabase.table("usuarios").select("*").eq("grupo_id", grupo_id).order("id").execute().data
+
+
+def criar_grupo(usuario_id: int, nome: str):
+    """Cria o grupo e move as contas do criador (formas e gastos) para ele."""
+    grupo = supabase.table("grupos").insert({"nome": nome}).execute().data[0]
+    gid = grupo["id"]
+    supabase.table("usuarios").update({"grupo_id": gid}).eq("id", usuario_id).execute()
+    supabase.table("formas_pagamento").update({"grupo_id": gid}) \
+        .eq("usuario_id", usuario_id).is_("grupo_id", "null").execute()
+    supabase.table("gastos").update({"grupo_id": gid}) \
+        .eq("usuario_id", usuario_id).is_("grupo_id", "null").execute()
+    return grupo
+
+
+def adicionar_membro_grupo(grupo_id: int, telefone: str):
+    """Adiciona o usuário do telefone ao grupo, criando-o se necessário.
+
+    Retorna (usuario, ja_estava_em_grupo). Membros novos não recebem formas
+    padrão — passam a usar as contas do grupo.
+    """
+    res = supabase.table("usuarios").select("*").eq("telefone", telefone).execute()
+    if res.data:
+        usuario = res.data[0]
+        if usuario.get("grupo_id"):
+            return usuario, True
+        supabase.table("usuarios").update({"grupo_id": grupo_id}).eq("id", usuario["id"]).execute()
+        return usuario, False
+
+    usuario = supabase.table("usuarios").insert({
+        "nome": telefone,
+        "telefone": telefone,
+        "grupo_id": grupo_id,
+    }).execute().data[0]
+    return usuario, False
+
+
+def sair_grupo(usuario_id: int):
+    """Remove o usuário do grupo e restaura formas padrão se ele ficou sem nenhuma."""
+    supabase.table("usuarios").update({"grupo_id": None}).eq("id", usuario_id).execute()
+    pessoais = supabase.table("formas_pagamento").select("id") \
+        .eq("usuario_id", usuario_id).is_("grupo_id", "null").execute().data
+    if not pessoais:
+        for nome, limite in FORMAS_PADRAO:
+            supabase.table("formas_pagamento").insert({
+                "usuario_id": usuario_id,
+                "nome": nome,
+                "limite_mensal": limite,
+            }).execute()
 
 
 # ---------------------------------------------------------------------------
