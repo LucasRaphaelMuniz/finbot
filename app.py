@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from handler import processar_mensagem
+from notificar import numero_bot
 
 app = Flask(__name__)
 
@@ -14,6 +15,7 @@ app = Flask(__name__)
 def webhook():
     telefone = request.form.get("From", "").strip()
     mensagem = request.form.get("Body", "").strip()
+    numero_bot.set(request.form.get("To", "").strip() or None)
 
     if not telefone or not mensagem:
         return str(MessagingResponse())
