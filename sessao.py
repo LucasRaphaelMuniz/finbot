@@ -1,12 +1,10 @@
-import psycopg2
-from psycopg2.extras import RealDictCursor
 from db import get_conn
 
 
 def get_sessao_ativa(usuario_id: int):
     """Retorna a sessão ativa (não expirada) mais recente ou None."""
     with get_conn() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor() as cur:
             cur.execute(
                 """SELECT *
                    FROM sessoes
