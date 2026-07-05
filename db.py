@@ -1,6 +1,6 @@
 import os
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import psycopg
+from psycopg.rows import dict_row
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -10,7 +10,7 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 
 def get_conn():
-    return psycopg2.connect(os.getenv("DATABASE_URL"))
+    return psycopg.connect(os.getenv("DATABASE_URL"), row_factory=dict_row)
 
 
 # ---------------------------------------------------------------------------
@@ -26,7 +26,7 @@ FORMAS_PADRAO = [
 def get_or_create_usuario(telefone: str):
     """Retorna (usuario_dict, is_new). Cria formas de pagamento padrão no 1.º acesso."""
     with get_conn() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor() as cur:
             cur.execute("SELECT * FROM usuarios WHERE telefone = %s", (telefone,))
             usuario = cur.fetchone()
             if usuario:
@@ -56,14 +56,14 @@ def get_or_create_usuario(telefone: str):
 
 def get_categorias():
     with get_conn() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor() as cur:
             cur.execute("SELECT * FROM categorias ORDER BY nome")
             return [dict(r) for r in cur.fetchall()]
 
 
 def get_formas_pagamento(usuario_id: int):
     with get_conn() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor() as cur:
             cur.execute(
                 "SELECT * FROM formas_pagamento WHERE usuario_id = %s ORDER BY nome",
                 (usuario_id,),
@@ -78,7 +78,7 @@ def get_formas_pagamento(usuario_id: int):
 def registrar_gasto(usuario_id: int, forma_id: int, categoria_id: int,
                     valor: float, descricao: str):
     with get_conn() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor() as cur:
             cur.execute(
                 """INSERT INTO gastos
                        (usuario_id, forma_pagamento_id, categoria_id, valor, descricao)
@@ -97,7 +97,7 @@ def registrar_gasto(usuario_id: int, forma_id: int, categoria_id: int,
 def get_saldo_forma(usuario_id: int, forma_id: int):
     """Retorna dict com gasto_mes, limite_mensal, nome."""
     with get_conn() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor() as cur:
             cur.execute(
                 """SELECT fp.nome,
                           fp.limite_mensal,
@@ -118,7 +118,7 @@ def get_saldo_forma(usuario_id: int, forma_id: int):
 
 def get_saldo_todas_formas(usuario_id: int):
     with get_conn() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor() as cur:
             cur.execute(
                 """SELECT fp.id,
                           fp.nome,
@@ -143,7 +143,7 @@ def get_saldo_todas_formas(usuario_id: int):
 
 def get_resumo_mes(usuario_id: int):
     with get_conn() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor() as cur:
             cur.execute(
                 """SELECT c.nome  AS categoria,
                           fp.nome AS forma,
