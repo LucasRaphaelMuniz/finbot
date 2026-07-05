@@ -102,11 +102,7 @@ def extrair_forma_pagamento(texto: str, formas: list):
     for forma in formas:
         nome_lower = forma["nome"].lower()
 
-        # Nome completo da forma no texto (cobre nomes curtos como VR, VA)
-        if re.search(r"\b" + re.escape(nome_lower) + r"\b", texto_lower):
-            return forma
-
-        # Palavras longas do nome (ex: "Pix", "Dinheiro")
+        # Palavras do nome (ex: "Pix", "Dinheiro") no texto
         palavras_nome = [w for w in re.split(r"\W+", nome_lower) if len(w) > 2]
         if any(w in texto_lower for w in palavras_nome):
             return forma
