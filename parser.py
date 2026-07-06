@@ -7,13 +7,93 @@ from difflib import SequenceMatcher
 
 _VALOR_RE = re.compile(r"R?\$?\s*(\d{1,6}(?:[.,]\d{1,2})?)", re.IGNORECASE)
 
-def extrair_valor(texto: str):
-    """Retorna float ou None."""
+# Palavras numéricas → valor
+_UNIDADES = {
+    "um": 1, "uma": 1, "dois": 2, "duas": 2,
+    "três": 3, "tres": 3, "quatro": 4, "cinco": 5,
+    "seis": 6, "sete": 7, "oito": 8, "nove": 9,
+    "dez": 10, "onze": 11, "doze": 12, "treze": 13,
+    "quatorze": 14, "catorze": 14, "quinze": 15,
+    "dezesseis": 16, "dezasseis": 16, "dezessete": 17,
+    "dezoito": 18, "dezenove": 19, "dezanove": 19,
+}
+_DEZENAS = {
+    "vinte": 20, "trinta": 30, "quarenta": 40, "cinquenta": 50,
+    "sessenta": 60, "setenta": 70, "oitenta": 80, "noventa": 90,
+}
+_CENTENAS = {
+    "cem": 100, "cento": 100,
+    "duzentos": 200, "duzentas": 200,
+    "trezentos": 300, "trezentas": 300,
+    "quatrocentos": 400, "quatrocentas": 400,
+    "quinhentos": 500, "quinhentas": 500,
+    "seiscentos": 600, "seiscentas": 600,
+    "setecentos": 700, "setecentas": 700,
+    "oitocentos": 800, "oitocentas": 800,
+    "novecentos": 900, "novecentas": 900,
+}
+_TODAS_PALAVRAS = {**_CENTENAS, **_DEZENAS, **_UNIDADES}
+
+
+def _palavras_para_numero(texto: str) -> float | None:
+    """
+    Converte sequências de palavras numéricas para float.
+    Ex: "cem" → 100, "cento e cinquenta" → 150, "mil e duzentos" → 1200
+    """
+    t = texto.lower()
+    # Normaliza variações
+    t = re.sub(r"\be\b", "e", t)
+
+    # Tokens relevantes: palavras numéricas + "mil" + "e"
+    palavras = re.split(r"[\s,]+", t)
+
+    total = 0
+    acumulado = 0  # valor atual sendo construído
+    encontrou = False
+
+    i = 0
+    while i < len(palavras):
+        p = palavras[i].strip(".,!?")
+
+        if p == "mil":
+            acumulado = max(acumulado, 1) * 1000
+            total += acumulado
+            acumulado = 0
+            encontrou = True
+        elif p in _TODAS_PALAVRAS:
+            v = _TODAS_PALAVRAS[p]
+            if v >= 100:
+                acumulado += v
+            else:
+                acumulado += v
+            encontrou = True
+        elif p == "e" and encontrou:
+            pass  # conectivo, continua
+        elif encontrou:
+            # Parou de ler números
+            break
+
+        i += 1
+
+    if encontrou:
+        total += acumulado
+        return float(total) if total > 0 else None
+    return None
+
+
+def extrair_valor(texto: str) -> float | None:
+    """
+    Retorna float ou None.
+    Aceita: '50', '50,90', 'R$ 50', 'cem', 'cinquenta reais', 'cento e vinte'.
+    """
+    # 1) Dígitos (padrão original)
     m = _VALOR_RE.search(texto)
     if m:
         raw = m.group(1).replace(",", ".")
         return float(raw)
-    return None
+
+    # 2) Palavras numéricas em português
+    return _palavras_para_numero(texto)
 
 
 # ---------------------------------------------------------------------------

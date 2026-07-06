@@ -76,20 +76,37 @@ def _normalizar_jid(jid: str) -> str | None:
     """
     Converte qualquer formato de JID para o formato canônico: DIGITS@s.whatsapp.net
     Retorna None para JIDs inválidos, de grupo (@g.us) ou de dispositivo (@lid).
+
+    Normalização do 9° dígito brasileiro:
+    Em 2016 os celulares brasileiros ganharam um 9 extra (8 → 9 dígitos locais).
+    O Evolution API às vezes retorna participantAlt no formato antigo (12 dígitos).
+    Ex: '554499912629' (12) → '5544999912629' (13)
     """
     if not jid:
         return None
-    if "@g.us" in jid:   # JID de grupo — não é um usuário
+    if "@g.us" in jid:
         return None
-    if "@lid" in jid:    # Linked Device ID — identificador instável, ignorar
+    if "@lid" in jid:
         return None
-    # Remove prefixo legado "whatsapp:+" ou "whatsapp:"
     jid = re.sub(r"^whatsapp:\+?", "", jid)
     jid = jid.lstrip("+")
+
+    # Extrai apenas os dígitos
     if "@s.whatsapp.net" in jid:
-        return jid
-    digits = re.sub(r"\D", "", jid)
-    return (digits + "@s.whatsapp.net") if digits else None
+        digits = jid.split("@")[0]
+    else:
+        digits = re.sub(r"\D", "", jid)
+
+    if not digits:
+        return None
+
+    # Corrige formato antigo brasileiro: 12 dígitos (55+DDD+8) → 13 (55+DDD+9+8)
+    if len(digits) == 12 and digits.startswith("55"):
+        local = digits[4:]          # 8 dígitos locais
+        if local.startswith("9"):   # celular (começa com 9)
+            digits = digits[:4] + "9" + local   # insere o 9 extra
+
+    return digits + "@s.whatsapp.net"
 
 
 def obter_telefone_e_jid(data: dict) -> tuple[str | None, str]:
