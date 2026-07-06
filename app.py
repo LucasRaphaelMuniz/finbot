@@ -95,18 +95,30 @@ def _normalizar_jid(jid: str) -> str | None:
 def obter_telefone_e_jid(data: dict) -> tuple[str | None, str]:
     """
     Retorna (telefone_normalizado, jid_para_resposta).
-    - telefone: DIGITS@s.whatsapp.net ou None se @lid/@g.us
+    - telefone: DIGITS@s.whatsapp.net ou None se inválido
     - jid: para onde enviar a resposta (pode ser grupo @g.us)
+
+    Evolution API v2 com multi-device usa @lid como participant,
+    mas disponibiliza participantAlt e sender com o número real.
     """
     key    = data.get("key", {})
     remote = key.get("remoteJid", "")
 
     if remote.endswith("@g.us"):
-        # Mensagem de grupo: responde no grupo, telefone = participante
+        # Mensagem de grupo
         participant = key.get("participant", "")
+        if "@lid" in participant:
+            # Multi-device: usa participantAlt (número real)
+            participant = data.get("participantAlt", "") or participant
         return _normalizar_jid(participant), remote
     else:
-        return _normalizar_jid(remote), remote
+        # Mensagem direta
+        telefone = _normalizar_jid(remote)
+        if not telefone:
+            # remoteJid é @lid: tenta o campo sender
+            sender = data.get("sender", "")
+            telefone = _normalizar_jid(sender)
+        return telefone, remote
 
 
 def obter_texto(msg: dict) -> str | None:
