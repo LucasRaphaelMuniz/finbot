@@ -325,13 +325,31 @@ def _cmd_grupo(uid: int, mensagem: str) -> str:
     if acao == "criar":
         if gid:
             return "❌ Você já está em um grupo. Use *grupo sair* antes de criar outro."
-        nome_grupo = partes[2].strip() if len(partes) > 2 else "Família"
+
+        # "grupo criar Família" ou "grupo criar Família +5511999999999"
+        resto       = partes[2].strip() if len(partes) > 2 else "Família"
+        tokens      = resto.split()
+        membro_tel  = None
+        if tokens and tokens[-1].startswith("+"):
+            membro_tel = tokens[-1]
+            nome_grupo = " ".join(tokens[:-1]) or "Família"
+        else:
+            nome_grupo = resto
+
         criar_grupo(uid, nome_grupo)
-        return (
-            f"✅ Grupo *{nome_grupo}* criado!\n"
-            "Suas formas de pagamento e gastos agora são compartilhados com o grupo.\n"
-            "Adicione membros com: *grupo add +5511999999999*"
-        )
+
+        # Adiciona membro já na criação, se informado
+        if membro_tel:
+            usuario_novo = get_usuario(uid)
+            novo_gid     = usuario_novo.get("grupo_id") if usuario_novo else None
+            if novo_gid:
+                jid = membro_tel.lstrip("+") + "@s.whatsapp.net"
+                adicionar_membro_grupo(novo_gid, jid)
+
+        return _tutorial_grupo(nome_grupo, membro_tel)
+
+    if acao == "tutorial":
+        return _tutorial_grupo()
 
     if acao in ("add", "adicionar", "convidar"):
         if not gid:
@@ -357,6 +375,39 @@ def _cmd_grupo(uid: int, mensagem: str) -> str:
         return "✅ Você saiu do grupo. Suas formas de pagamento padrão foram restauradas."
 
     return "❌ Use: *grupo*, *grupo criar Nome*, *grupo add +55...* ou *grupo sair*"
+
+
+# ---------------------------------------------------------------------------
+# Tutorial de boas-vindas ao grupo
+# ---------------------------------------------------------------------------
+
+def _tutorial_grupo(nome_grupo: str = "", membro_tel: str = None) -> str:
+    membro_linha = f"\n👥 *{membro_tel}* foi adicionado ao grupo!" if membro_tel else ""
+    return (
+        f"✅ *Grupo {nome_grupo} criado com saldo zerado!*{membro_linha}\n\n"
+        "─────────────────────────\n"
+        "⚙️ *Passo 1 — Configure as formas de pagamento:*\n"
+        "• *forma add Nubank 2000* — adiciona com limite\n"
+        "• *forma add Pix* — sem limite\n"
+        "• *forma remover Cartão* — remove\n"
+        "• *limite cartão 3000* — atualiza limite\n\n"
+        "─────────────────────────\n"
+        "💸 *Passo 2 — Registre gastos de 3 formas:*\n\n"
+        "💬 *Mensagem de texto:*\n"
+        "_50 mercado cartão_\n"
+        "_gastei 120,90 no restaurante no pix_\n\n"
+        "🎤 *Áudio:*\n"
+        "Fale o gasto normalmente. Ex: _\"cinquenta reais no mercado no cartão\"_\n\n"
+        "📸 *Foto de comprovante:*\n"
+        "Envie a foto — a IA lê o valor e registra automaticamente.\n\n"
+        "─────────────────────────\n"
+        "📊 *Consultas úteis:*\n"
+        "• *saldo* — saldo de cada forma\n"
+        "• *gastos* — últimos 5 gastos\n"
+        "• *resumo* — resumo mensal por categoria\n"
+        "• *excluir ultimo* — remove o último gasto\n\n"
+        "ℹ️ *ajuda* — todos os comandos"
+    )
 
 
 # ---------------------------------------------------------------------------

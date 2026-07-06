@@ -358,20 +358,19 @@ def get_membros_grupo(grupo_id: int):
 
 
 def criar_grupo(usuario_id: int, nome: str):
+    """Cria grupo com formas de pagamento padrão zeradas (sem herdar histórico pessoal)."""
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("INSERT INTO grupos (nome) VALUES (%s) RETURNING *", (nome,))
             grupo = dict(cur.fetchone())
             gid = grupo["id"]
             cur.execute("UPDATE usuarios SET grupo_id = %s WHERE id = %s", (gid, usuario_id))
-            cur.execute(
-                "UPDATE formas_pagamento SET grupo_id = %s WHERE usuario_id = %s AND grupo_id IS NULL",
-                (gid, usuario_id),
-            )
-            cur.execute(
-                "UPDATE gastos SET grupo_id = %s WHERE usuario_id = %s AND grupo_id IS NULL",
-                (gid, usuario_id),
-            )
+            # Cria formas padrão novas para o grupo (tudo zerado)
+            for nome_forma, limite in FORMAS_PADRAO:
+                cur.execute(
+                    "INSERT INTO formas_pagamento (usuario_id, grupo_id, nome, limite_mensal) VALUES (%s, %s, %s, %s)",
+                    (usuario_id, gid, nome_forma, limite),
+                )
             conn.commit()
             return grupo
 
