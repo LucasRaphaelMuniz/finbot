@@ -73,7 +73,8 @@ def obter_texto(msg: dict) -> str | None:
 # ---------------------------------------------------------------------------
 
 @app.route("/webhook", methods=["POST"])
-def webhook():
+@app.route("/webhook/<path:event_path>", methods=["POST"])
+def webhook(event_path=None):
     payload = request.get_json(silent=True)
     if not payload:
         return "", 200
