@@ -13,7 +13,6 @@ from db import (
     registrar_gasto,
     get_saldo_forma,
     set_nome_usuario,
-    set_parceiro_telefone,
     adicionar_forma_pagamento,
     remover_forma_pagamento,
     excluir_ultimo_gasto,
@@ -23,9 +22,12 @@ from db import (
     criar_grupo,
     adicionar_membro_grupo,
     sair_grupo,
+    limpar_formas_grupo,
+    restaurar_formas_padrao_grupo,
 )
 from sessao import (
     get_sessao_ativa,
+    get_dados_temp,
     criar_sessao,
     atualizar_sessao,
     deletar_sessao,
@@ -47,17 +49,35 @@ def _brl(valor: float) -> str:
 def processar_mensagem(telefone: str, mensagem: str) -> str:
     try:
         usuario, novo = get_or_create_usuario(telefone)
+        uid = usuario["id"]
+
+        # ── Usuário novo: inicia onboarding ────────────────────────────────
         if novo:
+            criar_sessao(uid, etapa="onboarding_nome", timeout_minutos=30)
             return (
-                "👋 *Olá! Você foi cadastrado no Finbot.*\n"
-                "Digite um valor para registrar seu primeiro gasto "
-                "ou *ajuda* para ver os comandos."
+                "👋 *Bem-vindo ao Finbot!*\n\n"
+                "Vou te ajudar a configurar tudo em poucos passos.\n\n"
+                "Qual é o seu nome?"
             )
 
-        uid   = usuario["id"]
         lower = mensagem.lower().strip()
 
-        # ── Comandos ────────────────────────────────────────────────────────
+        # ── Sessão ativa ────────────────────────────────────────────────────
+        sessao = get_sessao_ativa(uid)
+        if sessao:
+            # Onboarding tem prioridade sobre qualquer comando
+            if sessao["etapa"].startswith("onboarding_"):
+                return _processar_onboarding(uid, sessao, mensagem)
+            return _processar_sessao(uid, sessao, mensagem)
+
+        # ── Sessão expirada ─────────────────────────────────────────────────
+        if verificar_sessao_expirada(uid):
+            return (
+                "⏱ _Registro cancelado por inatividade._\n"
+                "Sua próxima mensagem será tratada como novo gasto."
+            )
+
+        # ── Comandos normais ────────────────────────────────────────────────
         if lower == "ajuda":
             return cmd_ajuda()
         if lower.startswith("saldo"):
@@ -81,24 +101,169 @@ def processar_mensagem(telefone: str, mensagem: str) -> str:
         if lower == "grupo" or lower.startswith("grupo "):
             return _cmd_grupo(uid, mensagem)
 
-        # ── Sessão ativa ────────────────────────────────────────────────────
-        sessao = get_sessao_ativa(uid)
-        if sessao:
-            return _processar_sessao(uid, sessao, mensagem)
-
-        # ── Sessão expirada ─────────────────────────────────────────────────
-        if verificar_sessao_expirada(uid):
-            return (
-                "⏱ _Registro cancelado por inatividade._\n"
-                "Sua próxima mensagem será tratada como novo gasto."
-            )
-
         # ── Input livre ─────────────────────────────────────────────────────
         return _processar_input_livre(uid, mensagem)
 
     except Exception as exc:
         print(f"[Finbot ERROR] {exc}")
         return "😕 Ocorreu um erro interno. Tente novamente em instantes."
+
+
+# ---------------------------------------------------------------------------
+# Onboarding — setup guiado para novos usuários
+# ---------------------------------------------------------------------------
+
+_NAO = {"nao", "não", "n", "no", "não quero", "nao quero", "pular", "skip"}
+
+
+def _processar_onboarding(uid: int, sessao: dict, mensagem: str) -> str:
+    etapa = sessao["etapa"]
+    dados = get_dados_temp(sessao)
+    txt   = mensagem.strip()
+    lower = txt.lower()
+
+    # ── Passo 1: nome do usuário ────────────────────────────────────────────
+    if etapa == "onboarding_nome":
+        nome = txt or "Usuário"
+        set_nome_usuario(uid, nome)
+        atualizar_sessao(uid, etapa="onboarding_grupo", timeout_minutos=30)
+        return (
+            f"Prazer, *{nome}*! 😊\n\n"
+            "Qual o nome do seu grupo familiar?\n"
+            "_Ex: Família Silva, Casal, Minha Conta_"
+        )
+
+    # ── Passo 2: nome do grupo ──────────────────────────────────────────────
+    if etapa == "onboarding_grupo":
+        nome_grupo = txt or "Família"
+        criar_grupo(uid, nome_grupo)
+        # Limpa as formas padrão criadas automaticamente — o usuário vai definir as suas
+        usuario_atual = get_usuario(uid) or {}
+        gid = usuario_atual.get("grupo_id")
+        if gid:
+            limpar_formas_grupo(gid)
+        atualizar_sessao(
+            uid, etapa="onboarding_membro",
+            dados_temp={"grupo_id": gid, "membros": 0},
+            timeout_minutos=30,
+        )
+        return (
+            f"✅ Grupo *{nome_grupo}* criado!\n\n"
+            "👥 Quer adicionar uma pessoa ao grupo?\n"
+            "Digite o número com DDD _(ex: 44999604273)_ ou *não*"
+        )
+
+    # ── Passo 3: membros do grupo ───────────────────────────────────────────
+    if etapa == "onboarding_membro":
+        gid = dados.get("grupo_id")
+        membros = dados.get("membros", 0)
+
+        if lower in _NAO:
+            # Avança para formas de pagamento
+            atualizar_sessao(
+                uid, etapa="onboarding_forma",
+                dados_temp={"grupo_id": gid, "formas": 0},
+                timeout_minutos=30,
+            )
+            return (
+                "💳 *Formas de pagamento*\n\n"
+                "Vamos cadastrar como vocês pagam. Digite nome + limite.\n"
+                "_Ex: Cartão 3000 | Pix 1500 | Nubank_ (sem limite)\n\n"
+                "Ou *não* para usar os padrão _(Cartão / Pix / Ticket)_"
+            )
+
+        jid = _normalizar_telefone(txt)
+        if not jid:
+            return (
+                "❌ Número inválido.\n"
+                "Digite com DDD _(ex: 44999604273)_ ou *não* para pular."
+            )
+
+        adicionar_membro_grupo(gid, jid)
+        numero = "+" + jid.replace("@s.whatsapp.net", "")
+        membros += 1
+        atualizar_sessao(
+            uid, etapa="onboarding_membro",
+            dados_temp={"grupo_id": gid, "membros": membros},
+            timeout_minutos=30,
+        )
+        return (
+            f"✅ *{numero}* adicionado!\n\n"
+            "Quer adicionar outro membro?\n"
+            "Digite o número _(ex: 44999604273)_ ou *não*"
+        )
+
+    # ── Passo 4: formas de pagamento ────────────────────────────────────────
+    if etapa == "onboarding_forma":
+        gid   = dados.get("grupo_id")
+        formas = dados.get("formas", 0)
+
+        if lower in _NAO:
+            if formas == 0:
+                # Nenhuma forma adicionada → restaura padrão
+                restaurar_formas_padrao_grupo(uid, gid)
+            return _onboarding_resumo(uid)
+
+        # Tenta parsear "Nome Valor" ou só "Nome"
+        m = re.match(r"^(.+?)\s+(\d{1,6}(?:[.,]\d{1,2})?)$", txt)
+        if m:
+            nome_forma = m.group(1).strip()
+            limite     = float(m.group(2).replace(",", "."))
+        else:
+            nome_forma = txt
+            limite     = None
+
+        adicionar_forma_pagamento(uid, nome_forma, limite)
+        formas += 1
+        limite_str = f" _(R$ {limite:,.0f})_" if limite else " _(sem limite)_"
+        atualizar_sessao(
+            uid, etapa="onboarding_forma",
+            dados_temp={"grupo_id": gid, "formas": formas},
+            timeout_minutos=30,
+        )
+        return (
+            f"✅ *{nome_forma}*{limite_str} adicionada!\n\n"
+            "Deseja adicionar outra forma de pagamento?\n"
+            "Digite _Nome + Valor_ _(ex: Nubank 2000)_ ou *não* para finalizar."
+        )
+
+    return "❓ Sessão inválida. Digite *ajuda* para ver os comandos."
+
+
+def _onboarding_resumo(uid: int) -> str:
+    """Finaliza onboarding e exibe resumo completo da configuração."""
+    deletar_sessao(uid)
+    usuario = get_usuario(uid) or {}
+    nome    = usuario.get("nome") or "você"
+    gid     = usuario.get("grupo_id")
+    grupo   = get_grupo(gid) if gid else None
+    membros = get_membros_grupo(gid) if gid else []
+    formas  = get_formas_pagamento(uid)
+
+    linhas = [f"🎉 *Tudo pronto, {nome}!*\n"]
+
+    if grupo:
+        linhas.append(f"👨‍👩‍👧 *Grupo:* {grupo['nome']}")
+    if membros:
+        nomes_membros = [m.get("nome") or m["telefone"] for m in membros]
+        linhas.append(f"👥 *Membros:* {', '.join(nomes_membros)}")
+
+    if formas:
+        linhas.append("\n💳 *Formas de pagamento:*")
+        for f in formas:
+            lim = f" — R$ {float(f['limite_mensal']):,.0f}" if f.get("limite_mensal") else " — sem limite"
+            linhas.append(f"• {f['nome']}{lim}")
+
+    linhas.append(
+        "\n─────────────────────────\n"
+        "💡 *Como registrar gastos:*\n"
+        "💬 Texto: _50 mercado cartão_\n"
+        "🎤 Áudio: fale o gasto normalmente\n"
+        "📸 Foto: envie o comprovante\n\n"
+        "📊 *saldo* · *gastos* · *resumo* · *ajuda*"
+    )
+
+    return "\n".join(linhas)
 
 
 # ---------------------------------------------------------------------------
@@ -216,6 +381,30 @@ def _registrar_e_confirmar(uid: int, forma: dict, categoria: dict,
 # Comandos extras
 # ---------------------------------------------------------------------------
 
+def _normalizar_telefone(tel: str) -> str | None:
+    """
+    Converte qualquer formato de telefone brasileiro para JID do WhatsApp.
+    Aceita: 44999604273, 5544999604273, +5544999604273, (44) 99960-4273, etc.
+    Retorna: '5544999604273@s.whatsapp.net' ou None se inválido.
+    """
+    tel = tel.strip()
+    # Remove tudo que não é dígito
+    digits = re.sub(r"\D", "", tel)
+
+    if not digits:
+        return None
+
+    # 10-11 dígitos → DDD + número sem código do país → adiciona 55
+    if len(digits) in (10, 11):
+        digits = "55" + digits
+
+    # Deve ter 12 ou 13 dígitos (55 + DDD2 + número8ou9)
+    if len(digits) not in (12, 13):
+        return None
+
+    return digits + "@s.whatsapp.net"
+
+
 def _cmd_apelido(uid: int, lower: str) -> str:
     partes = lower.split(None, 1)
     if len(partes) < 2:
@@ -226,15 +415,43 @@ def _cmd_apelido(uid: int, lower: str) -> str:
 
 
 def _cmd_vincular(uid: int, lower: str) -> str:
+    """
+    vincular 44999912629  →  normaliza, cria grupo (se não tiver) e adiciona o parceiro.
+    Aceita qualquer formato: com ou sem +55, com ou sem DDD completo.
+    """
     partes = lower.split(None, 1)
     if len(partes) < 2:
-        return "❌ Use: *vincular +5511999999999*"
-    tel = partes[1].strip().replace(" ", "")
-    if not tel.startswith("+"):
-        return "❌ Informe o número com código do país. Ex: *vincular +5511999999999*"
-    jid = tel.lstrip("+") + "@s.whatsapp.net"
-    set_parceiro_telefone(uid, jid)
-    return f"✅ Parceiro *{tel}* vinculado!"
+        return "❌ Use: *vincular 44999912629* (DDD + número)"
+
+    jid = _normalizar_telefone(partes[1])
+    if not jid:
+        return (
+            "❌ Número inválido.\n"
+            "Use: *vincular 44999912629* (DDD + número)\n"
+            "Ou: *vincular +5544999912629* (com código do país)"
+        )
+
+    usuario = get_usuario(uid) or {}
+    gid = usuario.get("grupo_id")
+
+    # Se ainda não está em grupo, cria um automaticamente
+    if not gid:
+        criar_grupo(uid, "Casal")
+        usuario = get_usuario(uid) or {}
+        gid = usuario.get("grupo_id")
+
+    membro, ja_em_grupo = adicionar_membro_grupo(gid, jid)
+    if ja_em_grupo:
+        if membro.get("grupo_id") == gid:
+            return "ℹ️ Esse número já está vinculado ao seu grupo."
+        return "❌ Esse número já pertence a outro grupo."
+
+    numero_display = "+" + jid.replace("@s.whatsapp.net", "")
+    return (
+        f"✅ *{numero_display}* vinculado!\n\n"
+        "Agora vocês compartilham o mesmo saldo e registros.\n"
+        "Configure as formas de pagamento com *forma add* ou veja o *saldo*."
+    )
 
 
 def _cmd_forma(uid: int, lower: str) -> str:
@@ -340,11 +557,12 @@ def _cmd_grupo(uid: int, mensagem: str) -> str:
 
         # Adiciona membro já na criação, se informado
         if membro_tel:
-            usuario_novo = get_usuario(uid)
-            novo_gid     = usuario_novo.get("grupo_id") if usuario_novo else None
-            if novo_gid:
-                jid = membro_tel.lstrip("+") + "@s.whatsapp.net"
-                adicionar_membro_grupo(novo_gid, jid)
+            jid = _normalizar_telefone(membro_tel)
+            if jid:
+                usuario_novo = get_usuario(uid)
+                novo_gid     = usuario_novo.get("grupo_id") if usuario_novo else None
+                if novo_gid:
+                    adicionar_membro_grupo(novo_gid, jid)
 
         return _tutorial_grupo(nome_grupo, membro_tel)
 
@@ -355,18 +573,18 @@ def _cmd_grupo(uid: int, mensagem: str) -> str:
         if not gid:
             return "❌ Crie um grupo primeiro: *grupo criar Família*"
         if len(partes) < 3:
-            return "❌ Use: *grupo add +5511999999999*"
-        tel = partes[2].strip().replace(" ", "")
-        if not tel.startswith("+"):
-            return "❌ Informe o número com código do país. Ex: *grupo add +5511999999999*"
-        jid = tel.lstrip("+") + "@s.whatsapp.net"
+            return "❌ Use: *grupo add 44999912629*"
+        jid = _normalizar_telefone(partes[2])
+        if not jid:
+            return "❌ Número inválido. Use: *grupo add 44999912629* (DDD + número)"
 
         membro, ja_em_grupo = adicionar_membro_grupo(gid, jid)
         if ja_em_grupo:
             if membro.get("grupo_id") == gid:
                 return "ℹ️ Essa pessoa já está no seu grupo."
             return "❌ Essa pessoa já pertence a outro grupo."
-        return f"✅ *{tel}* adicionado ao grupo!"
+        numero_display = "+" + jid.replace("@s.whatsapp.net", "")
+        return f"✅ *{numero_display}* adicionado ao grupo!"
 
     if acao == "sair":
         if not gid:

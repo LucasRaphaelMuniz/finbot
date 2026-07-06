@@ -1,3 +1,4 @@
+import json
 from db import get_conn
 
 
@@ -18,27 +19,41 @@ def get_sessao_ativa(usuario_id: int):
             return dict(row) if row else None
 
 
+def get_dados_temp(sessao: dict) -> dict:
+    """Deserializa dados_temp da sessão (JSON) para dict."""
+    raw = sessao.get("dados_temp") if sessao else None
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except Exception:
+        return {}
+
+
 def criar_sessao(usuario_id: int, etapa: str,
-                 valor_temp=None, categoria_temp=None, forma_temp=None):
-    """Deleta sessão existente e cria nova com timeout de 5 minutos."""
+                 valor_temp=None, categoria_temp=None, forma_temp=None,
+                 dados_temp: dict = None, timeout_minutos: int = 5):
+    """Deleta sessão existente e cria nova."""
     deletar_sessao(usuario_id)
+    dados_json = json.dumps(dados_temp) if dados_temp else None
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """INSERT INTO sessoes
+                f"""INSERT INTO sessoes
                        (usuario_id, etapa, valor_temp, categoria_temp, forma_temp,
-                        expira_em)
-                   VALUES (%s, %s, %s, %s, %s,
-                           NOW() + INTERVAL '5 minutes')""",
-                (usuario_id, etapa, valor_temp, categoria_temp, forma_temp),
+                        dados_temp, expira_em)
+                   VALUES (%s, %s, %s, %s, %s, %s,
+                           NOW() + INTERVAL '{timeout_minutos} minutes')""",
+                (usuario_id, etapa, valor_temp, categoria_temp, forma_temp, dados_json),
             )
             conn.commit()
 
 
 def atualizar_sessao(usuario_id: int, etapa: str = None,
-                     categoria_temp=None, forma_temp=None):
+                     categoria_temp=None, forma_temp=None,
+                     dados_temp: dict = None, timeout_minutos: int = 5):
     """Atualiza campos da sessão ativa e renova o timeout."""
-    sets = ["expira_em = NOW() + INTERVAL '5 minutes'"]
+    sets = [f"expira_em = NOW() + INTERVAL '{timeout_minutos} minutes'"]
     params = []
 
     if etapa is not None:
@@ -50,6 +65,9 @@ def atualizar_sessao(usuario_id: int, etapa: str = None,
     if forma_temp is not None:
         sets.append("forma_temp = %s")
         params.append(forma_temp)
+    if dados_temp is not None:
+        sets.append("dados_temp = %s")
+        params.append(json.dumps(dados_temp))
 
     params.append(usuario_id)
 

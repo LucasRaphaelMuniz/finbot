@@ -47,13 +47,22 @@ def baixar_midia(message: dict) -> bytes:
 # ---------------------------------------------------------------------------
 
 _PROMPT_COMPROVANTE = (
-    "Analise este comprovante, nota fiscal ou recibo. "
-    "Extraia as informações e responda SOMENTE em JSON válido com as chaves:\n"
-    "- valor: número decimal (ex: 49.90) ou null se não encontrado\n"
-    "- descricao: nome do estabelecimento ou tipo de compra (string curta)\n"
+    "Analise este comprovante, nota fiscal ou recibo brasileiro.\n"
+    "Responda SOMENTE em JSON válido com as chaves abaixo.\n\n"
+    "REGRAS OBRIGATÓRIAS:\n"
+    "1. 'valor' deve ser o VALOR TOTAL FINAL pago — procure os campos 'Valor Total', "
+    "'Total a Pagar', 'Valor a Pagar', 'Valor Pago' ou 'Total'. NUNCA use subtotais, "
+    "valores de itens individuais ou 'Valor Total de Itens'.\n"
+    "2. Formato brasileiro: vírgula é decimal, ponto é milhar. "
+    "Ex: '73,43' → 73.43 | '1.234,56' → 1234.56\n"
+    "3. 'numero_cupom': número do cupom/COO/NFCe para detectar duplicatas (string ou null).\n\n"
+    "Chaves do JSON:\n"
+    "- valor: número decimal (ex: 73.43) ou null\n"
+    "- descricao: nome do estabelecimento (string curta)\n"
     "- categoria_sugerida: uma de [Mercado, Combustível, Restaurante, Farmácia, "
     "Lazer, Educação, Saúde, Transporte, Outros]\n"
-    "- forma_pagamento: uma de [Cartão, Pix/Dinheiro, Ticket] ou null se não visível\n"
+    "- forma_pagamento: uma de [Cartão, Pix/Dinheiro, Ticket] ou null\n"
+    "- numero_cupom: identificador único do cupom (string) ou null\n\n"
     "Responda apenas o JSON, sem explicações."
 )
 
@@ -75,7 +84,7 @@ def analisar_comprovante(imagem_bytes: bytes, mimetype: str = "image/jpeg") -> d
                     {"type": "text", "text": _PROMPT_COMPROVANTE},
                     {
                         "type": "image_url",
-                        "image_url": {"url": f"data:{mime};base64,{b64}", "detail": "low"},
+                        "image_url": {"url": f"data:{mime};base64,{b64}", "detail": "high"},
                     },
                 ],
             }

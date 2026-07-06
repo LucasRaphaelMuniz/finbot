@@ -398,6 +398,27 @@ def adicionar_membro_grupo(grupo_id: int, telefone: str):
             return usuario, False
 
 
+def limpar_formas_grupo(grupo_id: int):
+    """Remove todas as formas de pagamento do grupo (para onboarding personalizado)."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM formas_pagamento WHERE grupo_id = %s", (grupo_id,))
+            conn.commit()
+
+
+def restaurar_formas_padrao_grupo(usuario_id: int, grupo_id: int):
+    """Adiciona as formas padrão ao grupo (usado quando o usuário não cadastra nenhuma)."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            for nome, limite in FORMAS_PADRAO:
+                cur.execute(
+                    "INSERT INTO formas_pagamento (usuario_id, grupo_id, nome, limite_mensal) "
+                    "VALUES (%s, %s, %s, %s)",
+                    (usuario_id, grupo_id, nome, limite),
+                )
+            conn.commit()
+
+
 def sair_grupo(usuario_id: int):
     with get_conn() as conn:
         with conn.cursor() as cur:

@@ -8,7 +8,9 @@ Tipos de mensagem tratados:
 """
 
 import os
+import re
 import httpx
+from datetime import datetime, timedelta, timezone
 from flask import Flask, request
 from dotenv import load_dotenv
 
@@ -20,8 +22,34 @@ from ai import analisar_comprovante, transcrever_audio, baixar_midia
 app = Flask(__name__)
 
 EVOLUTION_URL      = os.getenv("EVOLUTION_API_URL", "").rstrip("/")
+
+# Cache em memória para detecção de duplicatas (cupom → timestamp)
+_cupons_recentes: dict[str, datetime] = {}
+_JANELA_DUPLICATA = timedelta(minutes=10)
 EVOLUTION_KEY      = os.getenv("EVOLUTION_API_KEY", "")
 EVOLUTION_INSTANCE = os.getenv("EVOLUTION_INSTANCE", "")
+
+
+# ---------------------------------------------------------------------------
+# Detecção de duplicata de comprovante
+# ---------------------------------------------------------------------------
+
+def _e_duplicata(telefone: str, valor: float, numero_cupom: str | None) -> bool:
+    """Retorna True se este comprovante já foi registrado nos últimos 10 minutos."""
+    agora = datetime.now(timezone.utc)
+    # Limpa entradas expiradas
+    expirados = [k for k, t in _cupons_recentes.items() if agora - t > _JANELA_DUPLICATA]
+    for k in expirados:
+        del _cupons_recentes[k]
+
+    # Chave: cupom fiscal (se disponível) ou telefone+valor
+    chave = f"{telefone}:{numero_cupom}" if numero_cupom else f"{telefone}:{valor}"
+
+    if chave in _cupons_recentes:
+        return True
+
+    _cupons_recentes[chave] = agora
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -44,20 +72,41 @@ def enviar_mensagem(jid: str, texto: str):
 # Extração de metadados do payload Evolution
 # ---------------------------------------------------------------------------
 
-def obter_telefone_e_jid(data: dict) -> tuple[str, str]:
+def _normalizar_jid(jid: str) -> str | None:
     """
-    Retorna (telefone_do_remetente, jid_para_resposta).
-    Em grupos, telefone = participante; jid = grupo.
+    Converte qualquer formato de JID para o formato canônico: DIGITS@s.whatsapp.net
+    Retorna None para JIDs inválidos, de grupo (@g.us) ou de dispositivo (@lid).
     """
-    key = data.get("key", {})
-    jid = key.get("remoteJid", "")
+    if not jid:
+        return None
+    if "@g.us" in jid:   # JID de grupo — não é um usuário
+        return None
+    if "@lid" in jid:    # Linked Device ID — identificador instável, ignorar
+        return None
+    # Remove prefixo legado "whatsapp:+" ou "whatsapp:"
+    jid = re.sub(r"^whatsapp:\+?", "", jid)
+    jid = jid.lstrip("+")
+    if "@s.whatsapp.net" in jid:
+        return jid
+    digits = re.sub(r"\D", "", jid)
+    return (digits + "@s.whatsapp.net") if digits else None
 
-    if jid.endswith("@g.us"):
-        telefone = key.get("participant", jid)
+
+def obter_telefone_e_jid(data: dict) -> tuple[str | None, str]:
+    """
+    Retorna (telefone_normalizado, jid_para_resposta).
+    - telefone: DIGITS@s.whatsapp.net ou None se @lid/@g.us
+    - jid: para onde enviar a resposta (pode ser grupo @g.us)
+    """
+    key    = data.get("key", {})
+    remote = key.get("remoteJid", "")
+
+    if remote.endswith("@g.us"):
+        # Mensagem de grupo: responde no grupo, telefone = participante
+        participant = key.get("participant", "")
+        return _normalizar_jid(participant), remote
     else:
-        telefone = jid
-
-    return telefone, jid
+        return _normalizar_jid(remote), remote
 
 
 def obter_texto(msg: dict) -> str | None:
@@ -98,7 +147,10 @@ def webhook(event_path=None):
         return "", 200
 
     telefone, jid = obter_telefone_e_jid(data)
-    resposta       = None
+    if not telefone:
+        # @lid (linked device) ou formato desconhecido — ignora silenciosamente
+        return "", 200
+    resposta = None
 
     # ── Texto puro ──────────────────────────────────────────────────────────
     texto = obter_texto(msg)
@@ -113,14 +165,21 @@ def webhook(event_path=None):
             imagem_bytes = baixar_midia(data)
             dados = analisar_comprovante(imagem_bytes, mimetype)
 
-            valor = dados.get("valor")
+            valor        = dados.get("valor")
+            numero_cupom = dados.get("numero_cupom")
+
             if not valor:
                 resposta = (
-                    "🔍 Não consegui identificar o valor no comprovante.\n"
+                    "🔍 Não consegui identificar o valor total no comprovante.\n"
                     "Digite o valor manualmente (ex: *50 mercado cartão*)."
                 )
+            elif _e_duplicata(telefone, valor, numero_cupom):
+                resposta = (
+                    f"⚠️ Este comprovante de *R$ {str(valor).replace('.', ',')}* "
+                    "parece já ter sido registrado.\n"
+                    "Se for um gasto diferente, digite manualmente (ex: *50 mercado cartão*)."
+                )
             else:
-                # Monta texto sintético com os dados extraídos + legenda do usuário
                 partes = [
                     str(valor),
                     dados.get("descricao", ""),
