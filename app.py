@@ -34,7 +34,7 @@ def enviar_mensagem(jid: str, texto: str):
             f"{EVOLUTION_URL}/message/sendText/{EVOLUTION_INSTANCE}",
             json={"number": jid, "text": texto},
             headers={"apikey": EVOLUTION_KEY},
-            timeout=15,
+            timeout=45,
         )
     except Exception as e:
         print(f"[Finbot SEND ERROR] {e}")

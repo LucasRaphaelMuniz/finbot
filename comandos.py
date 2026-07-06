@@ -1,11 +1,7 @@
 import re
 from datetime import datetime
-from db import get_saldo_todas_formas, get_resumo_mes, atualizar_limite
+from db import get_saldo_todas_formas, get_resumo_mes, atualizar_limite, get_ultimos_gastos
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 _MESES_PT = {
     1: "Janeiro", 2: "Fevereiro", 3: "Março",    4: "Abril",
@@ -18,9 +14,7 @@ def _mes_ano() -> str:
     return f"{_MESES_PT[now.month]}/{now.year}"
 
 def _brl(valor: float) -> str:
-    """Formata valor em reais: R$ 1.234,56"""
-    s = f"{valor:,.2f}"                       # 1,234.56 (americano)
-    s = s.replace(",", "X").replace(".", ",").replace("X", ".")  # 1.234,56
+    s = f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     return f"R$ {s}"
 
 def _emoji_forma(nome: str) -> str:
@@ -34,16 +28,11 @@ def _emoji_forma(nome: str) -> str:
     return "💰"
 
 
-# ---------------------------------------------------------------------------
-# Comandos
-# ---------------------------------------------------------------------------
-
 def cmd_saldo(usuario_id: int, mensagem: str) -> str:
     formas = get_saldo_todas_formas(usuario_id)
     if not formas:
         return "📊 Nenhuma forma de pagamento cadastrada."
 
-    # Filtro opcional: "saldo cartão"
     partes = mensagem.strip().split(maxsplit=1)
     filtro = partes[1].strip() if len(partes) > 1 else None
     if filtro:
@@ -57,14 +46,19 @@ def cmd_saldo(usuario_id: int, mensagem: str) -> str:
         limite = float(f["limite_mensal"]) if f["limite_mensal"] else None
         emoji  = _emoji_forma(f["nome"])
 
+        linhas.append("")
+        linhas.append(f"{emoji} *{f['nome']}*")
         if limite:
             sobra = limite - gasto
-            linhas.append(
-                f"{emoji} {f['nome']}: {_brl(gasto)} / {_brl(limite)} "
-                f"— sobram {_brl(sobra)}"
-            )
+            pct   = (gasto / limite) * 100
+            linhas.append(f"*Saldo Disponível: {_brl(sobra)}*")
+            linhas.append(f"Total: {_brl(gasto)} / {_brl(limite)}")
+            if gasto > limite:
+                linhas.append("🚨 Limite ultrapassado!")
+            elif pct >= 80:
+                linhas.append(f"⚠️ {pct:.0f}% do limite usado")
         else:
-            linhas.append(f"{emoji} {f['nome']}: {_brl(gasto)} gastos este mês")
+            linhas.append(f"Total: {_brl(gasto)} gastos este mês")
 
     return "\n".join(linhas)
 
@@ -80,16 +74,13 @@ def cmd_resumo(usuario_id: int) -> str:
     for g in gastos:
         val = float(g["total"])
         pct = (val / total * 100) if total > 0 else 0
-        linhas.append(
-            f"• {g['categoria']} ({g['forma']}): {_brl(val)} ({pct:.0f}%)"
-        )
+        linhas.append(f"• {g['categoria']} ({g['forma']}): {_brl(val)} ({pct:.0f}%)")
 
     linhas.append(f"\n💰 *Total: {_brl(total)}*")
     return "\n".join(linhas)
 
 
 def cmd_limite(usuario_id: int, mensagem: str) -> str:
-    # Formato esperado: "limite <forma> <valor>"
     m = re.match(
         r"limite\s+(.+?)\s+(\d{1,6}(?:[.,]\d{1,2})?)$",
         mensagem.strip(),
@@ -106,19 +97,50 @@ def cmd_limite(usuario_id: int, mensagem: str) -> str:
     return f"❌ Forma de pagamento '{forma_nome}' não encontrada."
 
 
+def cmd_gastos(usuario_id: int) -> str:
+    gastos = get_ultimos_gastos(usuario_id, limit=5)
+    if not gastos:
+        return "📋 Nenhum gasto registrado."
+
+    linhas = ["📋 *Últimos gastos:*"]
+    for i, g in enumerate(gastos, 1):
+        val   = _brl(float(g["valor"]))
+        cat   = g.get("categoria_nome") or "?"
+        forma = g.get("forma_nome") or "?"
+        data  = str(g["data"])[:10] if g.get("data") else "?"
+        linhas.append(f"{i}. {val} — {cat} — {forma} ({data})")
+
+    linhas.append("\n• *excluir ultimo* — remove o mais recente")
+    linhas.append("• *editar ultimo 45,90* — corrige o valor do mais recente")
+    return "\n".join(linhas)
+
+
 def cmd_ajuda() -> str:
     return (
         "🤖 *Finbot — Comandos disponíveis*\n\n"
         "📝 *Registrar gasto (input livre):*\n"
-        "Envie valor + categoria + pagamento em qualquer ordem:\n"
         "_Ex: 50 mercado cartão_\n"
         "_Ex: gastei 120,90 no restaurante no pix_\n\n"
         "📊 *Consultas:*\n"
         "• *saldo* — saldo de todas as formas\n"
         "• *saldo cartão* — saldo de uma forma específica\n"
-        "• *resumo* — gastos do mês por categoria\n\n"
-        "⚙️ *Configuração:*\n"
-        "• *limite cartão 3000* — atualizar limite mensal\n\n"
+        "• *resumo* — gastos do mês por categoria\n"
+        "• *gastos* — últimos 5 gastos\n\n"
+        "🗑 *Gerenciar gastos:*\n"
+        "• *excluir ultimo* — remove o último gasto\n"
+        "• *editar ultimo 45,90* — corrige o valor do último\n\n"
+        "💳 *Gerenciar formas de pagamento:*\n"
+        "• *forma add Nubank 2000* — adiciona forma com limite\n"
+        "• *forma remover Nubank* — remove forma\n"
+        "• *limite cartão 3000* — atualiza limite mensal\n\n"
+        "👨‍👩‍👧 *Grupo (contas compartilhadas):*\n"
+        "• *grupo criar Família* — cria grupo com contas conjuntas\n"
+        "• *grupo add +5511999999999* — adiciona membro\n"
+        "• *grupo* — mostra o grupo e os membros\n"
+        "• *grupo sair* — sai do grupo\n\n"
+        "👤 *Perfil:*\n"
+        "• *apelido SeuNome* — define seu nome no bot\n"
+        "• *vincular +5511999999999* — vincula parceiro\n\n"
         "ℹ️ *ajuda* — este menu\n\n"
         "⏱ Registros incompletos expiram em 5 minutos."
     )

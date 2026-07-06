@@ -1,5 +1,5 @@
 """
-init_db.py — Cria tabelas e faz o seed de categorias.
+init_db.py — Cria/atualiza tabelas e faz o seed de categorias.
 Execute uma vez antes de subir o servidor:
 
     python init_db.py
@@ -12,15 +12,23 @@ from dotenv import load_dotenv
 load_dotenv()
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS grupos (
+    id   SERIAL PRIMARY KEY,
+    nome TEXT
+);
+
 CREATE TABLE IF NOT EXISTS usuarios (
-    id       SERIAL PRIMARY KEY,
-    nome     TEXT,
-    telefone TEXT UNIQUE
+    id                SERIAL PRIMARY KEY,
+    nome              TEXT,
+    telefone          TEXT UNIQUE,
+    parceiro_telefone TEXT,
+    grupo_id          INT REFERENCES grupos(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS formas_pagamento (
     id            SERIAL PRIMARY KEY,
     usuario_id    INT REFERENCES usuarios(id) ON DELETE CASCADE,
+    grupo_id      INT REFERENCES grupos(id) ON DELETE CASCADE,
     nome          TEXT,
     limite_mensal DECIMAL
 );
@@ -35,6 +43,7 @@ CREATE TABLE IF NOT EXISTS gastos (
     usuario_id         INT REFERENCES usuarios(id) ON DELETE CASCADE,
     forma_pagamento_id INT REFERENCES formas_pagamento(id),
     categoria_id       INT REFERENCES categorias(id),
+    grupo_id           INT REFERENCES grupos(id) ON DELETE SET NULL,
     valor              DECIMAL,
     descricao          TEXT,
     data               TIMESTAMP DEFAULT NOW()
@@ -50,6 +59,11 @@ CREATE TABLE IF NOT EXISTS sessoes (
     criado_em      TIMESTAMP DEFAULT NOW(),
     expira_em      TIMESTAMP
 );
+
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS parceiro_telefone TEXT;
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS grupo_id INT REFERENCES grupos(id) ON DELETE SET NULL;
+ALTER TABLE formas_pagamento ADD COLUMN IF NOT EXISTS grupo_id INT REFERENCES grupos(id) ON DELETE CASCADE;
+ALTER TABLE gastos ADD COLUMN IF NOT EXISTS grupo_id INT REFERENCES grupos(id) ON DELETE SET NULL;
 """
 
 CATEGORIAS = [
@@ -62,7 +76,7 @@ def main():
     conn = psycopg.connect(os.getenv("DATABASE_URL"))
     cur  = conn.cursor()
 
-    print("→ Criando tabelas...")
+    print("→ Criando/atualizando tabelas...")
     cur.execute(SCHEMA)
 
     print("→ Inserindo categorias...")
