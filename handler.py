@@ -230,6 +230,17 @@ def _processar_onboarding(uid: int, sessao: dict, mensagem: str) -> str:
     return "❓ Sessão inválida. Digite *ajuda* para ver os comandos."
 
 
+def _fmt_membro(m: dict) -> str:
+    """Retorna nome amigável do membro: nome real ou número formatado."""
+    nome = m.get("nome", "")
+    tel  = m.get("telefone", "")
+    if nome and nome != tel:
+        return nome
+    # JID → "+55..." legível
+    digits = tel.replace("@s.whatsapp.net", "").replace("@lid", "")
+    return f"+{digits}" if digits else tel
+
+
 def _onboarding_resumo(uid: int) -> str:
     """Finaliza onboarding e exibe resumo completo da configuração."""
     deletar_sessao(uid)
@@ -245,7 +256,7 @@ def _onboarding_resumo(uid: int) -> str:
     if grupo:
         linhas.append(f"👨‍👩‍👧 *Grupo:* {grupo['nome']}")
     if membros:
-        nomes_membros = [m.get("nome") or m["telefone"] for m in membros]
+        nomes_membros = [_fmt_membro(m) for m in membros]
         linhas.append(f"👥 *Membros:* {', '.join(nomes_membros)}")
 
     if formas:
@@ -532,7 +543,7 @@ def _cmd_grupo(uid: int, mensagem: str) -> str:
         membros = get_membros_grupo(gid)
         linhas  = [f"👨‍👩‍👧 *Grupo {grupo.get('nome', '')}*", "Membros:"]
         for m in membros:
-            linhas.append(f"• {m.get('nome') or m['telefone']}")
+            linhas.append(f"• {_fmt_membro(m)}")
         linhas.append("\n• *grupo add +55...* — adicionar membro")
         linhas.append("• *grupo sair* — sair do grupo")
         return "\n".join(linhas)
