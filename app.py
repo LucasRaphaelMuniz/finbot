@@ -8,106 +8,110 @@ Tipos de mensagem tratados:
 """
 
 import os
-import re
-import httpx
 from datetime import datetime, timedelta, timezone
-from flask import Flask, request
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from werkzeug.exceptions import HTTPException
 from dotenv import load_dotenv
 
 load_dotenv()
 
 from handler import processar_mensagem
 from ai import analisar_comprovante, transcrever_audio, baixar_midia
+from db import get_or_create_usuario
+from services.categorias import get_categorias as get_categorias_usuario
+from services.webhook_seguranca import validar_apikey, verificar_e_marcar_duplicata, passou_rate_limit
+from parser import parece_gasto_ou_comando
+from utils.app_error import AppError
+from utils.logging_config import obter_logger
+from utils.telefone import normalizar as _normalizar_jid
+from providers.evolution import enviar_mensagem
+from routes import register_routes
+
+logger = obter_logger("finbot.app")
 
 app = Flask(__name__)
 
-EVOLUTION_URL      = os.getenv("EVOLUTION_API_URL", "").rstrip("/")
+# CORS restrito ao domínio do finbot-web (Fase 4.3, §4.3 do PLANO_EXECUCAO.md).
+# Webhook do WhatsApp (/webhook) não precisa de CORS — só a API sob /api/*
+# é chamada por um browser.
+CORS(app, resources={r"/api/*": {"origins": os.getenv("FINBOT_WEB_ORIGIN", "http://localhost:3000")}})
 
-# Cache em memória para detecção de duplicatas (cupom → timestamp)
-_cupons_recentes: dict[str, datetime] = {}
-_JANELA_DUPLICATA = timedelta(minutes=10)
-EVOLUTION_KEY      = os.getenv("EVOLUTION_API_KEY", "")
-EVOLUTION_INSTANCE = os.getenv("EVOLUTION_INSTANCE", "")
-
-
-# ---------------------------------------------------------------------------
-# Detecção de duplicata de comprovante
-# ---------------------------------------------------------------------------
-
-def _e_duplicata(telefone: str, valor: float, numero_cupom: str | None) -> bool:
-    """Retorna True se este comprovante já foi registrado nos últimos 10 minutos."""
-    agora = datetime.now(timezone.utc)
-    # Limpa entradas expiradas
-    expirados = [k for k, t in _cupons_recentes.items() if agora - t > _JANELA_DUPLICATA]
-    for k in expirados:
-        del _cupons_recentes[k]
-
-    # Chave: cupom fiscal (se disponível) ou telefone+valor
-    chave = f"{telefone}:{numero_cupom}" if numero_cupom else f"{telefone}:{valor}"
-
-    if chave in _cupons_recentes:
-        return True
-
-    _cupons_recentes[chave] = agora
-    return False
+register_routes(app)
 
 
 # ---------------------------------------------------------------------------
-# Envio de resposta via Evolution API
+# Error handler central da API (padrão CLAUDE.md: rotas/services dão
+# `raise AppError(...)`, nunca `return jsonify(erro), status` espalhado).
+# Não afeta o webhook do WhatsApp (/webhook sempre responde "", 200 pro
+# Evolution API, mesmo em erro — ver bloco try/except dentro de webhook()).
 # ---------------------------------------------------------------------------
 
-def enviar_mensagem(jid: str, texto: str):
-    try:
-        httpx.post(
-            f"{EVOLUTION_URL}/message/sendText/{EVOLUTION_INSTANCE}",
-            json={"number": jid, "text": texto},
-            headers={"apikey": EVOLUTION_KEY},
-            timeout=45,
-        )
-    except Exception as e:
-        print(f"[Finbot SEND ERROR] {e}")
+@app.errorhandler(AppError)
+def _handle_app_error(err: AppError):
+    return jsonify(err.to_dict()), err.status_code
+
+
+@app.errorhandler(Exception)
+def _handle_unexpected_error(err: Exception):
+    # Erro não previsto na API web (não confundir com o try/except do
+    # webhook do WhatsApp, que é outro caminho de código). Flask já despacha
+    # AppError pro @app.errorhandler(AppError) acima antes de chegar aqui —
+    # o isinstance(err, AppError) que existia aqui era inalcançável (D4 do
+    # AUDITORIA_E_PLANO_CADASTRO.md), removido.
+    if isinstance(err, HTTPException):
+        # 404 de rota inexistente, 405 método errado, etc. — preserva o
+        # código HTTP real do Flask/Werkzeug em vez de mascarar tudo como 500.
+        return jsonify({"erro": "erro_http", "mensagem": err.description}), err.code
+    # Só chega aqui erro de verdade não previsto — loga e devolve 500
+    # genérico, nunca vaza detalhe de exceção interna pro cliente HTTP.
+    logger.exception(f"Erro não previsto na API: {err}")
+    return jsonify({"erro": "erro_interno", "mensagem": "Ocorreu um erro interno."}), 500
+
+
+# ---------------------------------------------------------------------------
+# Fail-closed do webhook em produção sem segredo configurado (Fase D2 do
+# AUDITORIA_E_PLANO_CADASTRO.md, corrige F7).
+#
+# services/webhook_seguranca.py:validar_apikey é fail-OPEN de propósito
+# quando EVOLUTION_WEBHOOK_SECRET não está setado — decisão deliberada pra
+# não travar quem ainda está configurando localmente. Mas em produção
+# (Railway) isso deixaria o webhook aceitando qualquer POST não autenticado.
+# RAILWAY_ENVIRONMENT é injetada automaticamente pela plataforma — não
+# existe em dev local, então esse check não atrapalha `python app.py` na
+# sua máquina.
+# ---------------------------------------------------------------------------
+
+_PRODUCAO_SEM_SECRET = bool(os.getenv("RAILWAY_ENVIRONMENT")) and not os.getenv("EVOLUTION_WEBHOOK_SECRET")
+if _PRODUCAO_SEM_SECRET:
+    logger.error(
+        "EVOLUTION_WEBHOOK_SECRET não configurado em produção (RAILWAY_ENVIRONMENT "
+        "presente) — /webhook vai recusar TODO tráfego até isso ser corrigido."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Formatação de valor para o texto sintético do comprovante
+# ---------------------------------------------------------------------------
+
+def _valor_para_texto_br(valor) -> str:
+    """
+    Formata o valor numérico vindo do Vision (float) como string em formato
+    BR (vírgula decimal) antes de embuti-lo no texto_sintetico.
+
+    Por quê: `str(float)` usa ponto decimal e nem sempre com 2 casas
+    (ex.: 50.0 -> '50.0', só 1 dígito após o ponto). O parser trata '.' como
+    decimal apenas quando seguido de exatamente 2 dígitos (D1); fora disso
+    interpreta como separador de milhar, e '50.0' virava 500 nesse caminho.
+    Formatar sempre com vírgula remove a ambiguidade na origem, em vez de
+    empurrar mais heurística para o parser.
+    """
+    return f"{float(valor):.2f}".replace(".", ",")
 
 
 # ---------------------------------------------------------------------------
 # Extração de metadados do payload Evolution
 # ---------------------------------------------------------------------------
-
-def _normalizar_jid(jid: str) -> str | None:
-    """
-    Converte qualquer formato de JID para o formato canônico: DIGITS@s.whatsapp.net
-    Retorna None para JIDs inválidos, de grupo (@g.us) ou de dispositivo (@lid).
-
-    Normalização do 9° dígito brasileiro:
-    Em 2016 os celulares brasileiros ganharam um 9 extra (8 → 9 dígitos locais).
-    O Evolution API às vezes retorna participantAlt no formato antigo (12 dígitos).
-    Ex: '554499912629' (12) → '5544999912629' (13)
-    """
-    if not jid:
-        return None
-    if "@g.us" in jid:
-        return None
-    if "@lid" in jid:
-        return None
-    jid = re.sub(r"^whatsapp:\+?", "", jid)
-    jid = jid.lstrip("+")
-
-    # Extrai apenas os dígitos
-    if "@s.whatsapp.net" in jid:
-        digits = jid.split("@")[0]
-    else:
-        digits = re.sub(r"\D", "", jid)
-
-    if not digits:
-        return None
-
-    # Corrige formato antigo brasileiro: 12 dígitos (55+DDD+8) → 13 (55+DDD+9+8)
-    if len(digits) == 12 and digits.startswith("55"):
-        local = digits[4:]          # 8 dígitos locais
-        if local.startswith("9"):   # celular (começa com 9)
-            digits = digits[:4] + "9" + local   # insere o 9 extra
-
-    return digits + "@s.whatsapp.net"
-
 
 def obter_telefone_e_jid(data: dict) -> tuple[str | None, str]:
     """
@@ -148,6 +152,19 @@ def obter_texto(msg: dict) -> str | None:
 @app.route("/webhook", methods=["POST"])
 @app.route("/webhook/<path:event_path>", methods=["POST"])
 def webhook(event_path=None):
+    # Fase D2 — produção sem EVOLUTION_WEBHOOK_SECRET configurado: recusa
+    # tudo (fail-closed), em vez de aceitar por engano (ver checagem no
+    # startup do módulo, acima).
+    if _PRODUCAO_SEM_SECRET:
+        return "", 401
+
+    # Fase 7.1 — antes disso, qualquer POST era aceito e processado. Com
+    # EVOLUTION_WEBHOOK_SECRET configurado, exige o header 'apikey' batendo
+    # com o segredo (comparação em tempo constante, ver services/webhook_seguranca.py).
+    if not validar_apikey(request.headers.get("apikey")):
+        logger.warning("Webhook rejeitado: apikey ausente ou inválida.")
+        return "", 401
+
     payload = request.get_json(silent=True)
     if not payload:
         return "", 200
@@ -174,20 +191,49 @@ def webhook(event_path=None):
     if not telefone:
         # @lid (linked device) ou formato desconhecido — ignora silenciosamente
         return "", 200
+
+    # Fase 7.3 — limite simples por telefone (20 msg/min); protege contra
+    # abuso/loop antes de gastar processamento (e possivelmente chamada de
+    # IA) em qualquer mensagem.
+    if not passou_rate_limit(telefone):
+        logger.warning(f"Rate limit excedido para {telefone} — mensagem ignorada.")
+        return "", 200
+
+    eh_grupo_whatsapp = key.get("remoteJid", "").endswith("@g.us")
     resposta = None
 
     # ── Texto puro ──────────────────────────────────────────────────────────
     texto = obter_texto(msg)
     if texto:
-        resposta = processar_mensagem(telefone, texto.strip())
+        texto = texto.strip()
+        # Fase 7.4 — em grupo real do WhatsApp (P4: grupo continua
+        # suportado), só processa se parecer gasto/comando; chit-chat comum
+        # do grupo não deve acionar o fallback de IA (custo de LLM por
+        # mensagem não dirigida ao bot). Mensagem direta (1:1) sempre processa.
+        if eh_grupo_whatsapp and not parece_gasto_ou_comando(texto):
+            return "", 200
+        resposta = processar_mensagem(telefone, texto)
 
     # ── Imagem (comprovante) ────────────────────────────────────────────────
     elif "imageMessage" in msg:
         caption  = msg["imageMessage"].get("caption", "")
         mimetype = msg["imageMessage"].get("mimetype", "image/jpeg")
+
+        # Fase 7.4 — em grupo, só vale a pena chamar a Vision (custo de IA)
+        # se a foto vier com legenda: uma imagem solta num grupo é, na
+        # imensa maioria das vezes, papo/meme entre os membros, não um
+        # comprovante endereçado ao bot.
+        if eh_grupo_whatsapp and not caption.strip():
+            return "", 200
+
         try:
             imagem_bytes = baixar_midia(data)
-            dados = analisar_comprovante(imagem_bytes, mimetype)
+            # Resolve o usuário aqui (idempotente — get_or_create_usuario já
+            # existe/é chamado de novo em processar_mensagem mais abaixo) só
+            # para buscar as categorias do grupo antes de acionar a Vision (Fase 3.1).
+            usuario_atual, _ = get_or_create_usuario(telefone)
+            nomes_categorias = [c["nome"] for c in get_categorias_usuario(usuario_atual["id"])]
+            dados = analisar_comprovante(imagem_bytes, mimetype, categorias=nomes_categorias)
 
             valor        = dados.get("valor")
             numero_cupom = dados.get("numero_cupom")
@@ -197,7 +243,7 @@ def webhook(event_path=None):
                     "🔍 Não consegui identificar o valor total no comprovante.\n"
                     "Digite o valor manualmente (ex: *50 mercado cartão*)."
                 )
-            elif _e_duplicata(telefone, valor, numero_cupom):
+            elif verificar_e_marcar_duplicata(telefone, valor, numero_cupom):
                 resposta = (
                     f"⚠️ Este comprovante de *R$ {str(valor).replace('.', ',')}* "
                     "parece já ter sido registrado.\n"
@@ -205,7 +251,7 @@ def webhook(event_path=None):
                 )
             else:
                 partes = [
-                    str(valor),
+                    _valor_para_texto_br(valor),
                     dados.get("descricao", ""),
                     dados.get("categoria_sugerida", ""),
                     dados.get("forma_pagamento") or "",
@@ -216,38 +262,18 @@ def webhook(event_path=None):
                 resposta  = f"📄 _Comprovante lido pela IA_\n\n{resultado}"
 
         except Exception as e:
-            print(f"[AI Vision ERROR] {e}")
+            logger.error(f"Erro ao processar comprovante (Vision): {e}")
             resposta = "😕 Erro ao ler o comprovante. Tente digitar o gasto manualmente."
 
     # ── Áudio PTT (voz) ─────────────────────────────────────────────────────
     elif "audioMessage" in msg:
+        # Sem filtro barato aqui, diferente de texto/imagem: áudio não tem
+        # nenhum sinal textual (nem legenda) disponível ANTES de já ter
+        # pago o custo da transcrição — não tem como aplicar um filtro
+        # barato de verdade sem primeiro transcrever. Decisão consciente,
+        # não descuido: se o volume de áudio em grupos virar problema de
+        # custo real, a mitigação certa é desabilitar áudio em @g.us por
+        # completo, não tentar adivinhar antes de ouvir.
         mimetype = msg["audioMessage"].get("mimetype", "audio/ogg; codecs=opus")
         try:
-            audio_bytes  = baixar_midia(data)
-            transcricao  = transcrever_audio(audio_bytes, mimetype)
-            resultado    = processar_mensagem(telefone, transcricao)
-            resposta     = f"🎤 _Ouvi: \"{transcricao}\"_\n\n{resultado}"
-
-        except Exception as e:
-            print(f"[AI Audio ERROR] {e}")
-            resposta = "😕 Não consegui entender o áudio. Tente digitar o gasto."
-
-    # ── Tipo não suportado ───────────────────────────────────────────────────
-    else:
-        # Documentos, stickers, etc. — ignora silenciosamente
-        return "", 200
-
-    if resposta:
-        enviar_mensagem(jid, resposta)
-
-    return "", 200
-
-
-@app.route("/health", methods=["GET"])
-def health():
-    return {"status": "ok"}, 200
-
-
-if __name__ == "__main__":
-    port = int(os.getenv("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+            audio_bytes  =

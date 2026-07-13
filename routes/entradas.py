@@ -1,0 +1,58 @@
+"""routes/entradas.py — GET/POST /api/entradas, PUT/DELETE /api/entradas/:id (Fase 4.3)."""
+
+from flask import Blueprint, request, g
+
+from middlewares.ensure_authenticated import ensure_authenticated, requer_grupo
+from utils.app_error import AppError
+from services.entradas import (
+    registrar_entrada,
+    get_entradas_mes,
+    atualizar_entrada,
+    remover_entrada,
+)
+
+bp = Blueprint("entradas", __name__, url_prefix="/api/entradas")
+
+
+@bp.route("", methods=["GET"])
+@ensure_authenticated
+@requer_grupo
+def listar():
+    # services/entradas.py hoje só tem get_entradas_mes (mês corrente, usado
+    # pelo bot). Filtro por mês arbitrário fica pendente — o dashboard usa
+    # GET /api/resumo (services/resumo.py) pro histórico agregado; a lista
+    # crua por mês passado só importa pra tela de /lancamentos (Fase 5.1),
+    # que ainda não existe.
+    return {"itens": get_entradas_mes(g.usuario_id)}
+
+
+@bp.route("", methods=["POST"])
+@ensure_authenticated
+@requer_grupo
+def criar():
+    dados = request.get_json(silent=True) or {}
+    if dados.get("valor") is None:
+        raise AppError("valor é obrigatório.", 400, "campos_obrigatorios")
+    entrada = registrar_entrada(g.usuario_id, float(dados["valor"]), dados.get("descricao", ""))
+    return entrada, 201
+
+
+@bp.route("/<int:entrada_id>", methods=["PUT"])
+@ensure_authenticated
+@requer_grupo
+def atualizar(entrada_id):
+    dados = request.get_json(silent=True) or {}
+    entrada = atualizar_entrada(g.usuario_id, entrada_id, valor=dados.get("valor"), descricao=dados.get("descricao"))
+    if not entrada:
+        raise AppError("Entrada não encontrada (ou nenhum campo pra atualizar).", 404, "nao_encontrado")
+    return entrada
+
+
+@bp.route("/<int:entrada_id>", methods=["DELETE"])
+@ensure_authenticated
+@requer_grupo
+def remover(entrada_id):
+    entrada = remover_entrada(g.usuario_id, entrada_id)
+    if not entrada:
+        raise AppError("Entrada não encontrada.", 404, "nao_encontrado")
+    return entrada

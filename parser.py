@@ -2,10 +2,27 @@ import re
 from difflib import SequenceMatcher
 
 # ---------------------------------------------------------------------------
+# Entrada/receita (Fase 3.5) — checado antes do fluxo de gasto no input livre
+# ---------------------------------------------------------------------------
+
+_ENTRADA_KEYWORDS = ["recebi", "entrada", "salário", "salario", "caiu", "ganhei"]
+
+
+def eh_entrada(texto: str) -> bool:
+    """
+    Detecta se o texto descreve uma entrada/receita, não um gasto — mesmo
+    padrão de palavra-chave usado pelo resto do parser (aliases de categoria,
+    palavras numéricas), não é uma classificação por IA.
+    """
+    texto_lower = texto.lower()
+    return any(p in texto_lower for p in _ENTRADA_KEYWORDS)
+
+
+# ---------------------------------------------------------------------------
 # Valor
 # ---------------------------------------------------------------------------
 
-_VALOR_RE = re.compile(r"R?\$?\s*(\d{1,6}(?:[.,]\d{1,2})?)", re.IGNORECASE)
+_VALOR_RE = re.compile(r"R?\$?\s*(\d+(?:[.,]\d+)*)", re.IGNORECASE)
 
 # Palavras numéricas → valor
 _UNIDADES = {
@@ -81,19 +98,74 @@ def _palavras_para_numero(texto: str) -> float | None:
     return None
 
 
+def _normalizar_numero_br(raw: str) -> float:
+    """
+    Normaliza uma string numérica em formato brasileiro para float.
+
+    Regra (decisão D1 do PLANO_EXECUCAO.md):
+    - Se há vírgula: vírgula é sempre o separador decimal, qualquer ponto
+      presente é separador de milhar (removido). Ex: '1.103,04' -> 1103.04.
+    - Se há só ponto: ambíguo. Só é tratado como decimal quando há exatamente
+      um ponto seguido de exatamente 2 dígitos no final (ex: '1103.04',
+      formato que aparece no caminho valor-da-IA -> texto -> parser).
+      Qualquer outro caso (1, 3+ dígitos após o ponto, ou múltiplos pontos)
+      é tratado como separador de milhar e removido. Ex: '1.103' -> 1103.0.
+    - Sem pontuação: número inteiro.
+    """
+    raw = raw.strip(".,")
+    if "," in raw:
+        normalizado = raw.replace(".", "").replace(",", ".")
+    elif "." in raw:
+        partes = raw.split(".")
+        if len(partes) == 2 and len(partes[1]) == 2:
+            normalizado = raw
+        else:
+            normalizado = raw.replace(".", "")
+    else:
+        normalizado = raw
+    return float(normalizado)
+
+
 def extrair_valor(texto: str) -> float | None:
     """
     Retorna float ou None.
-    Aceita: '50', '50,90', 'R$ 50', 'cem', 'cinquenta reais', 'cento e vinte'.
+    Aceita: '50', '50,90', 'R$ 50', '1.103,04', 'cem', 'cinquenta reais', 'cento e vinte'.
     """
     # 1) Dígitos (padrão original)
     m = _VALOR_RE.search(texto)
     if m:
-        raw = m.group(1).replace(",", ".")
-        return float(raw)
+        return _normalizar_numero_br(m.group(1))
 
     # 2) Palavras numéricas em português
     return _palavras_para_numero(texto)
+
+
+# ---------------------------------------------------------------------------
+# Parcelamento (Fase 3.2)
+# ---------------------------------------------------------------------------
+
+_PARCELAS_RE = re.compile(
+    r"(?:(\d{1,2})\s*x\b)"
+    r"|(?:em\s+(\d{1,2})\s+vezes)"
+    r"|(?:parcelad[oa]\s+em\s+(\d{1,2}))",
+    re.IGNORECASE,
+)
+
+
+def extrair_parcelas(texto: str) -> int | None:
+    """
+    Detecta quantidade de parcelas no texto: '12x', 'em 12 vezes', 'parcelado em 12'.
+    Retorna None se não houver menção a parcelamento, ou se o número for <= 1
+    (parcelar em 1x não é parcelamento).
+    """
+    m = _PARCELAS_RE.search(texto.lower())
+    if not m:
+        return None
+    grupo = next((g for g in m.groups() if g), None)
+    if not grupo:
+        return None
+    n = int(grupo)
+    return n if n > 1 else None
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +199,15 @@ def _sim(a: str, b: str) -> float:
 
 
 def extrair_categoria(texto: str, categorias: list, threshold: float = 0.70):
-    """Retorna o dict da categoria detectada ou None."""
+    """
+    Retorna o dict da categoria detectada ou None.
+
+    `categorias` pode incluir tanto globais (grupo_id None/ausente) quanto
+    customizadas de um grupo (Fase 3.1). Os aliases de `_CAT_ALIASES` só se
+    aplicam às globais — uma categoria customizada só casa por nome exato
+    (substring) ou por fuzzy match (etapa 3), nunca por um alias genérico que
+    o grupo não escolheu.
+    """
     texto_lower = texto.lower()
     palavras = re.split(r"\W+", texto_lower)
 
@@ -137,8 +217,10 @@ def extrair_categoria(texto: str, categorias: list, threshold: float = 0.70):
         if nome in texto_lower:
             return cat
 
-    # 2) Aliases
+    # 2) Aliases — só para categorias globais (grupo_id None)
     for cat in categorias:
+        if cat.get("grupo_id") is not None:
+            continue
         nome_cat = cat["nome"].lower()
         for fragmento, aliases in _CAT_ALIASES.items():
             if fragmento in nome_cat or nome_cat in fragmento:
@@ -182,8 +264,8 @@ def extrair_forma_pagamento(texto: str, formas: list):
     for forma in formas:
         nome_lower = forma["nome"].lower()
 
-        # Palavras do nome (ex: "Pix", "Dinheiro") no texto
-        palavras_nome = [w for w in re.split(r"\W+", nome_lower) if len(w) > 2]
+        # Palavras do nome (ex: "Pix", "VA", "VR") no texto — mínimo 2 chars
+        palavras_nome = [w for w in re.split(r"\W+", nome_lower) if len(w) >= 2]
         if any(w in texto_lower for w in palavras_nome):
             return forma
 

@@ -1,7 +1,10 @@
 import os
+from datetime import date
 import psycopg
 from psycopg.rows import dict_row
 from dotenv import load_dotenv
+
+from services.competencia import calcular_competencia
 
 load_dotenv()
 
@@ -35,7 +38,15 @@ def _get_grupo_id(conn, usuario_id: int):
 # ---------------------------------------------------------------------------
 
 def get_or_create_usuario(telefone: str):
-    """Retorna (usuario_dict, is_new). Cria formas de pagamento padrão no 1.º acesso."""
+    """Retorna (usuario_dict, is_new). Cria formas de pagamento padrão no 1.º acesso.
+
+    Sentido inverso web->bot (Fase B5 do AUDITORIA_E_PLANO_CADASTRO.md): se
+    a pessoa criou conta pelo web primeiro e só depois manda mensagem no
+    WhatsApp, este SELECT já encontra o registro criado pela web — não
+    precisou de nenhum código novo pra esse caminho, só da normalização
+    única de telefone (Fase A). Antes da Fase A isso não funcionava: a web
+    salvava telefone cru e o `telefone` recebido aqui (vindo de
+    app.py:_normalizar_jid) já era sempre JID — nunca batiam."""
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM usuarios WHERE telefone = %s", (telefone,))
@@ -87,15 +98,9 @@ def set_parceiro_telefone(usuario_id: int, telefone: str):
 
 
 # ---------------------------------------------------------------------------
-# Categorias e formas de pagamento
+# Formas de pagamento
+# (categorias por grupo migraram para services/categorias.py — Fase 3.1)
 # ---------------------------------------------------------------------------
-
-def get_categorias():
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT * FROM categorias ORDER BY nome")
-            return [dict(r) for r in cur.fetchall()]
-
 
 def get_formas_pagamento(usuario_id: int):
     with get_conn() as conn:
@@ -149,18 +154,75 @@ def remover_forma_pagamento(usuario_id: int, nome_forma: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def registrar_gasto(usuario_id: int, forma_id: int, categoria_id: int,
-                    valor: float, descricao: str, grupo_id: int = None):
+                    valor: float, descricao: str, grupo_id: int = None,
+                    dia_fechamento: int = None):
+    """
+    dia_fechamento: dia de fechamento da forma de pagamento usada (Fase 3.2),
+    usado para calcular a competência do gasto (ver services/competencia.py).
+    Sem dia_fechamento (pix/dinheiro/ticket), a competência é o mês corrente.
+    """
+    competencia = calcular_competencia(date.today(), dia_fechamento)
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """INSERT INTO gastos
-                       (usuario_id, forma_pagamento_id, categoria_id, valor, descricao, grupo_id)
-                   VALUES (%s, %s, %s, %s, %s, %s)
+                       (usuario_id, forma_pagamento_id, categoria_id, valor, descricao,
+                        grupo_id, competencia)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s)
                    RETURNING *""",
-                (usuario_id, forma_id, categoria_id, valor, descricao, grupo_id),
+                (usuario_id, forma_id, categoria_id, valor, descricao, grupo_id, competencia),
             )
             conn.commit()
             return dict(cur.fetchone())
+
+
+def get_ultimo_gasto(usuario_id: int):
+    """
+    Peek (sem excluir) do último gasto — usado por 'excluir ultimo' para decidir
+    se precisa perguntar 'só esta parcela x compra inteira' (D3, Fase 3.2) antes
+    de excluir de fato.
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT g.id, g.valor, g.compra_parcelada_id, g.parcela_num,
+                          c.nome  AS categoria_nome,
+                          fp.nome AS forma_nome,
+                          cp.parcelas AS total_parcelas
+                   FROM gastos g
+                   LEFT JOIN categorias c          ON c.id  = g.categoria_id
+                   LEFT JOIN formas_pagamento fp   ON fp.id = g.forma_pagamento_id
+                   LEFT JOIN compras_parceladas cp ON cp.id = g.compra_parcelada_id
+                   WHERE g.usuario_id = %s
+                   ORDER BY g.data DESC
+                   LIMIT 1""",
+                (usuario_id,),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+
+def excluir_gasto_por_id(gasto_id: int):
+    """Exclui um gasto específico pelo id — usado para excluir só 1 parcela (D3)."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT g.id, g.valor,
+                          c.nome  AS categoria_nome,
+                          fp.nome AS forma_nome
+                   FROM gastos g
+                   LEFT JOIN categorias c        ON c.id  = g.categoria_id
+                   LEFT JOIN formas_pagamento fp ON fp.id = g.forma_pagamento_id
+                   WHERE g.id = %s""",
+                (gasto_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            gasto = dict(row)
+            cur.execute("DELETE FROM gastos WHERE id = %s", (gasto_id,))
+            conn.commit()
+            return gasto
 
 
 def get_ultimos_gastos(usuario_id: int, limit: int = 5):
@@ -222,6 +284,14 @@ def editar_ultimo_gasto_valor(usuario_id: int, novo_valor: float) -> bool:
 
 # ---------------------------------------------------------------------------
 # Saldo
+#
+# Fase 3.2 (P2, aceito pelo Lucas em 11/07/2026): saldo e resumo passaram a
+# filtrar por g.competencia em vez de g.data. Isso muda o resultado para
+# gastos de cartão perto do fechamento — um gasto feito em 28/07 num cartão
+# com dia_fechamento=25 agora conta na competência de agosto, não julho.
+# Histórico existente foi backfillado (migração 003: competencia = mês da
+# própria data), então gastos antigos continuam batendo com o que já
+# apareciam antes dessa mudança.
 # ---------------------------------------------------------------------------
 
 def get_saldo_forma(usuario_id: int, forma_id: int):
@@ -235,7 +305,7 @@ def get_saldo_forma(usuario_id: int, forma_id: int):
                    FROM formas_pagamento fp
                    LEFT JOIN gastos g
                      ON g.forma_pagamento_id = fp.id
-                    AND DATE_TRUNC('month', g.data) = DATE_TRUNC('month', NOW())
+                    AND DATE_TRUNC('month', g.competencia) = DATE_TRUNC('month', NOW())
                    WHERE fp.id = %s
                    GROUP BY fp.id, fp.nome, fp.limite_mensal""",
                 (forma_id,),
@@ -255,7 +325,7 @@ def get_saldo_todas_formas(usuario_id: int):
                        FROM formas_pagamento fp
                        LEFT JOIN gastos g
                          ON g.forma_pagamento_id = fp.id
-                        AND DATE_TRUNC('month', g.data) = DATE_TRUNC('month', NOW())
+                        AND DATE_TRUNC('month', g.competencia) = DATE_TRUNC('month', NOW())
                        WHERE fp.grupo_id = %s
                        GROUP BY fp.id, fp.nome, fp.limite_mensal
                        ORDER BY fp.nome""",
@@ -268,7 +338,7 @@ def get_saldo_todas_formas(usuario_id: int):
                        FROM formas_pagamento fp
                        LEFT JOIN gastos g
                          ON g.forma_pagamento_id = fp.id
-                        AND DATE_TRUNC('month', g.data) = DATE_TRUNC('month', NOW())
+                        AND DATE_TRUNC('month', g.competencia) = DATE_TRUNC('month', NOW())
                        WHERE fp.usuario_id = %s AND fp.grupo_id IS NULL
                        GROUP BY fp.id, fp.nome, fp.limite_mensal
                        ORDER BY fp.nome""",
@@ -292,7 +362,7 @@ def get_resumo_mes(usuario_id: int):
                        JOIN categorias c        ON c.id  = g.categoria_id
                        JOIN formas_pagamento fp ON fp.id = g.forma_pagamento_id
                        WHERE fp.grupo_id = %s
-                         AND DATE_TRUNC('month', g.data) = DATE_TRUNC('month', NOW())
+                         AND DATE_TRUNC('month', g.competencia) = DATE_TRUNC('month', NOW())
                        GROUP BY c.nome, fp.nome
                        ORDER BY total DESC""",
                     (gid,),
@@ -305,7 +375,7 @@ def get_resumo_mes(usuario_id: int):
                        JOIN formas_pagamento fp ON fp.id = g.forma_pagamento_id
                        WHERE g.usuario_id = %s
                          AND g.grupo_id IS NULL
-                         AND DATE_TRUNC('month', g.data) = DATE_TRUNC('month', NOW())
+                         AND DATE_TRUNC('month', g.competencia) = DATE_TRUNC('month', NOW())
                        GROUP BY c.nome, fp.nome
                        ORDER BY total DESC""",
                     (usuario_id,),
@@ -358,10 +428,15 @@ def get_membros_grupo(grupo_id: int):
 
 
 def criar_grupo(usuario_id: int, nome: str):
-    """Cria grupo com formas de pagamento padrão zeradas (sem herdar histórico pessoal)."""
+    """Cria grupo com formas de pagamento padrão zeradas (sem herdar histórico pessoal).
+    Quem cria vira criador_id (migração 010) — único que pode apagar o grupo
+    inteiro depois, ver services/conta.py."""
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("INSERT INTO grupos (nome) VALUES (%s) RETURNING *", (nome,))
+            cur.execute(
+                "INSERT INTO grupos (nome, criador_id) VALUES (%s, %s) RETURNING *",
+                (nome, usuario_id),
+            )
             grupo = dict(cur.fetchone())
             gid = grupo["id"]
             cur.execute("UPDATE usuarios SET grupo_id = %s WHERE id = %s", (gid, usuario_id))
@@ -419,19 +494,4 @@ def restaurar_formas_padrao_grupo(usuario_id: int, grupo_id: int):
             conn.commit()
 
 
-def sair_grupo(usuario_id: int):
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("UPDATE usuarios SET grupo_id = NULL WHERE id = %s", (usuario_id,))
-            cur.execute(
-                "SELECT COUNT(*) AS cnt FROM formas_pagamento WHERE usuario_id = %s AND grupo_id IS NULL",
-                (usuario_id,),
-            )
-            cnt = cur.fetchone()["cnt"]
-            if cnt == 0:
-                for nome, limite in FORMAS_PADRAO:
-                    cur.execute(
-                        "INSERT INTO formas_pagamento (usuario_id, nome, limite_mensal) VALUES (%s, %s, %s)",
-                        (usuario_id, nome, limite),
-                    )
-            conn.commit()
+def sair_grupo(usu

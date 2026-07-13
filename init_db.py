@@ -1,13 +1,36 @@
 """
-init_db.py — Cria/atualiza tabelas e faz o seed de categorias.
-Execute uma vez antes de subir o servidor:
+init_db.py — Bootstrap de banco novo: cria o schema base (pré-migrações),
+roda o seed de categorias e em seguida aplica todas as migrações versionadas
+de `database/migrations/` via `database/migrate.py`.
+
+Execute uma vez antes de subir o servidor num banco vazio:
 
     python init_db.py
+
+Para um banco que já tem o schema base (produção, staging existente) e só
+precisa das migrações novas, use `python -m database.migrate` diretamente —
+rodar init_db.py de novo é seguro (tudo é IF NOT EXISTS / idempotente), mas
+desnecessário.
+
+Nota (D4 do AUDITORIA_E_PLANO_CADASTRO.md, ponto menor): este arquivo e
+`database/migrations/` convivem hoje — o schema base vive aqui, tudo que
+veio depois vive em migrations numeradas. Risco real: alguém altera uma
+tabela do schema base sem lembrar que init_db.py também a define, e os dois
+lugares divergem silenciosamente pra quem inicializa um banco do zero vs.
+quem só aplica migrações num banco existente. A consolidação ideal (mover
+todo o schema base pra uma migration 001, e init_db.py virar só um wrapper
+que chama `database.migrate`) está fora do escopo desta fase — é uma
+mudança que mexe em toda inicialização de banco (dev, staging, produção) e
+merece ser feita isolada, testada com um dump real antes de aplicar em
+produção, não encaixada de passagem numa fase que já mexeu em cadastro/OTP.
+Registrando a decisão aqui pra não se perder.
 """
 
 import os
 import psycopg
 from dotenv import load_dotenv
+
+from database.migrate import migrar as aplicar_migracoes
 
 load_dotenv()
 
@@ -56,42 +79,24 @@ CREATE TABLE IF NOT EXISTS sessoes (
     valor_temp     DECIMAL,
     categoria_temp INT,
     forma_temp     INT,
+    dados_temp     TEXT,
     criado_em      TIMESTAMP DEFAULT NOW(),
     expira_em      TIMESTAMP
 );
-
-ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS parceiro_telefone TEXT;
-ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS grupo_id INT REFERENCES grupos(id) ON DELETE SET NULL;
-ALTER TABLE formas_pagamento ADD COLUMN IF NOT EXISTS grupo_id INT REFERENCES grupos(id) ON DELETE CASCADE;
-ALTER TABLE gastos ADD COLUMN IF NOT EXISTS grupo_id INT REFERENCES grupos(id) ON DELETE SET NULL;
-ALTER TABLE sessoes ADD COLUMN IF NOT EXISTS dados_temp TEXT;
 """
+# Nota: até a Fase 1 deste bootstrap, as colunas grupo_id/parceiro_telefone/dados_temp
+# eram adicionadas via ALTER TABLE ... IF NOT EXISTS soltos aqui embaixo. Isso foi
+# absorvido: para bancos novos já nascem nas CREATE TABLE acima; para bancos
+# existentes que já tinham essas colunas (produção atual), os ALTERs eram no-ops
+# de qualquer forma. Novas alterações de schema a partir de agora vão para
+# database/migrations/, não para esta string (D2 do PLANO_EXECUCAO.md).
 
 CATEGORIAS = [
     "Mercado", "Combustível", "Restaurante", "Farmácia",
     "Lazer", "Educação", "Saúde", "Transporte", "Outros",
 ]
 
-
-def main():
-    conn = psycopg.connect(os.getenv("DATABASE_URL"))
-    cur  = conn.cursor()
-
-    print("→ Criando/atualizando tabelas...")
-    cur.execute(SCHEMA)
-
-    print("→ Inserindo categorias...")
-    for cat in CATEGORIAS:
-        cur.execute(
-            "INSERT INTO categorias (nome) VALUES (%s) ON CONFLICT (nome) DO NOTHING",
-            (cat,),
-        )
-
-    conn.commit()
-    cur.close()
-    conn.close()
-    print("✅ Banco inicializado com sucesso.")
-
-
-if __name__ == "__main__":
-    main()
+# Fase 6 (P6, preço definido pelo Lucas em 11/07/2026) + Fase 6.2:
+# max_membros é o que services/grupos.py::adicionar_membro usa pra bloquear
+# excedente. "unlimited" com max_membros=10 é "soft limit" (nome do plano
+# promete ilimitado, mas o e

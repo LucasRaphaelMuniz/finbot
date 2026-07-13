@@ -1,6 +1,7 @@
 import re
 from datetime import datetime
 from db import get_saldo_todas_formas, get_resumo_mes, atualizar_limite, get_ultimos_gastos
+from services.entradas import get_total_entradas_mes
 
 
 _MESES_PT = {
@@ -64,19 +65,30 @@ def cmd_saldo(usuario_id: int, mensagem: str) -> str:
 
 
 def cmd_resumo(usuario_id: int) -> str:
-    gastos = get_resumo_mes(usuario_id)
-    if not gastos:
-        return "📋 Nenhum gasto registrado este mês."
+    gastos          = get_resumo_mes(usuario_id)
+    total_entradas  = get_total_entradas_mes(usuario_id)
 
-    total = sum(float(g["total"]) for g in gastos)
+    if not gastos and not total_entradas:
+        return "📋 Nenhum gasto ou entrada registrado este mês."
+
+    total_gastos = sum(float(g["total"]) for g in gastos) if gastos else 0.0
     linhas = [f"📋 *Resumo — {_mes_ano()}*\n"]
 
-    for g in gastos:
-        val = float(g["total"])
-        pct = (val / total * 100) if total > 0 else 0
-        linhas.append(f"• {g['categoria']} ({g['forma']}): {_brl(val)} ({pct:.0f}%)")
+    if gastos:
+        for g in gastos:
+            val = float(g["total"])
+            pct = (val / total_gastos * 100) if total_gastos > 0 else 0
+            linhas.append(f"• {g['categoria']} ({g['forma']}): {_brl(val)} ({pct:.0f}%)")
+        linhas.append(f"\n💸 *Gastos: {_brl(total_gastos)}*")
+    else:
+        linhas.append("💸 Nenhum gasto este mês.")
 
-    linhas.append(f"\n💰 *Total: {_brl(total)}*")
+    # Entradas do mês (Fase 3.5, G1) — não afetam saldo por forma, só o
+    # saldo geral do mês (entradas − gastos).
+    linhas.append(f"📈 *Entradas: {_brl(total_entradas)}*")
+    saldo = total_entradas - total_gastos
+    linhas.append(f"💰 *Saldo do mês: {_brl(saldo)}*")
+
     return "\n".join(linhas)
 
 
@@ -120,23 +132,36 @@ def cmd_ajuda() -> str:
         "🤖 *Finbot — Comandos disponíveis*\n\n"
         "📝 *Registrar gasto (input livre):*\n"
         "_Ex: 50 mercado cartão_\n"
-        "_Ex: gastei 120,90 no restaurante no pix_\n\n"
+        "_Ex: gastei 120,90 no restaurante no pix_\n"
+        "_Ex: notebook 1103,04 em 12x no cartão_ — compra parcelada\n\n"
+        "📈 *Registrar entrada/receita:*\n"
+        "_Ex: recebi 2000 de salário_\n"
+        "_Ex: entrada 2000 salário_ — comando explícito\n\n"
         "📊 *Consultas:*\n"
         "• *saldo* — saldo de todas as formas\n"
         "• *saldo cartão* — saldo de uma forma específica\n"
         "• *resumo* — gastos do mês por categoria\n"
         "• *gastos* — últimos 5 gastos\n\n"
         "🗑 *Gerenciar gastos:*\n"
-        "• *excluir ultimo* — remove o último gasto\n"
+        "• *excluir ultimo* — remove o último gasto (se for parcela, pergunta "
+        "se é só ela ou a compra inteira)\n"
         "• *editar ultimo 45,90* — corrige o valor do último\n\n"
         "💳 *Gerenciar formas de pagamento:*\n"
         "• *forma add Nubank 2000* — adiciona forma com limite\n"
         "• *forma remover Nubank* — remove forma\n"
         "• *limite cartão 3000* — atualiza limite mensal\n\n"
+        "📂 *Gerenciar categorias (por grupo):*\n"
+        "• *categoria add Assinaturas* — cria categoria personalizada\n"
+        "• *categoria remover Assinaturas* — remove (só personalizadas)\n"
+        "• *categoria listar* — mostra todas as disponíveis\n\n"
+        "📅 *Despesas fixas (lançam sozinhas todo mês):*\n"
+        "• *fixa add Aluguel 1200 dia 5* — cadastra\n"
+        "• *fixa remover Aluguel* — para de lançar\n"
+        "• *fixa listar* — mostra todas as ativas\n\n"
         "👨‍👩‍👧 *Grupo (contas compartilhadas):*\n"
-        "• *vincular 44999912629* — vincula parceiro (cria grupo automaticamente)\n"
+        "• *vincular 44912345678* — vincula parceiro (cria grupo automaticamente)\n"
         "• *grupo criar Família* — cria grupo com nome personalizado\n"
-        "• *grupo add 44999912629* — adiciona membro ao grupo\n"
+        "• *grupo add 44912345678* — adiciona membro ao grupo\n"
         "• *grupo* — mostra o grupo e os membros\n"
         "• *grupo sair* — sai do grupo\n\n"
         "👤 *Perfil:*\n"

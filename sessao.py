@@ -38,13 +38,20 @@ def criar_sessao(usuario_id: int, etapa: str,
     dados_json = json.dumps(dados_temp) if dados_temp else None
     with get_conn() as conn:
         with conn.cursor() as cur:
+            # make_interval(mins => %s) em vez de INTERVAL '{timeout_minutos}
+            # minutes' via f-string (Fase D4 do AUDITORIA_E_PLANO_CADASTRO.md,
+            # ponto menor da auditoria) — timeout_minutos hoje só vem de
+            # constantes internas do código (nunca de input do usuário), então
+            # não era exploravel, mas passar como parâmetro em vez de montar a
+            # string do SQL é o padrão idiomático do psycopg, evita o hábito
+            # de interpolar SQL "porque nesse caso é seguro".
             cur.execute(
-                f"""INSERT INTO sessoes
+                """INSERT INTO sessoes
                        (usuario_id, etapa, valor_temp, categoria_temp, forma_temp,
                         dados_temp, expira_em)
                    VALUES (%s, %s, %s, %s, %s, %s,
-                           NOW() + INTERVAL '{timeout_minutos} minutes')""",
-                (usuario_id, etapa, valor_temp, categoria_temp, forma_temp, dados_json),
+                           NOW() + make_interval(mins => %s))""",
+                (usuario_id, etapa, valor_temp, categoria_temp, forma_temp, dados_json, timeout_minutos),
             )
             conn.commit()
 
@@ -53,8 +60,8 @@ def atualizar_sessao(usuario_id: int, etapa: str = None,
                      categoria_temp=None, forma_temp=None,
                      dados_temp: dict = None, timeout_minutos: int = 5):
     """Atualiza campos da sessão ativa e renova o timeout."""
-    sets = [f"expira_em = NOW() + INTERVAL '{timeout_minutos} minutes'"]
-    params = []
+    sets = ["expira_em = NOW() + make_interval(mins => %s)"]
+    params = [timeout_minutos]
 
     if etapa is not None:
         sets.append("etapa = %s")
@@ -89,18 +96,4 @@ def deletar_sessao(usuario_id: int):
 
 
 def verificar_sessao_expirada(usuario_id: int) -> bool:
-    """Retorna True (e deleta) se existe sessão expirada. False se não há nada."""
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """SELECT id FROM sessoes
-                   WHERE usuario_id = %s AND expira_em <= NOW()
-                   LIMIT 1""",
-                (usuario_id,),
-            )
-            expirada = cur.fetchone()
-            if expirada:
-                cur.execute("DELETE FROM sessoes WHERE usuario_id = %s", (usuario_id,))
-                conn.commit()
-                return True
-    return False
+    """Retorna True (e deleta) se e
