@@ -494,4 +494,19 @@ def restaurar_formas_padrao_grupo(usuario_id: int, grupo_id: int):
             conn.commit()
 
 
-def sair_grupo(usu
+def sair_grupo(usuario_id: int):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE usuarios SET grupo_id = NULL WHERE id = %s", (usuario_id,))
+            cur.execute(
+                "SELECT COUNT(*) AS cnt FROM formas_pagamento WHERE usuario_id = %s AND grupo_id IS NULL",
+                (usuario_id,),
+            )
+            cnt = cur.fetchone()["cnt"]
+            if cnt == 0:
+                for nome, limite in FORMAS_PADRAO:
+                    cur.execute(
+                        "INSERT INTO formas_pagamento (usuario_id, nome, limite_mensal) VALUES (%s, %s, %s)",
+                        (usuario_id, nome, limite),
+                    )
+            conn.commit()

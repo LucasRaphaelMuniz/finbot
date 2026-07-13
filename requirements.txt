@@ -5,4 +5,7 @@ python-dotenv==1.0.1
 gunicorn==22.0.0
 openai==1.35.0
 httpx==0.27.0
-PyJWT[crypto]==
+PyJWT[crypto]==2.9.0
+pypdf==4.3.1
+pytest==8.3.2
+pytest-mock==3.14.0

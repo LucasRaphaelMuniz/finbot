@@ -143,4 +143,23 @@ def remover_gasto(usuario_id: int, gasto_id: int) -> dict | None:
     usuário/grupo. Se `compra_parcelada_id` estiver presente, quem chama
     (routes/gastos.py) decide entre excluir só esta parcela (esta função) ou
     a compra inteira (services.parcelamento.excluir_compra_parcelada) — a
-    mesma escolha "esta x inteira" da decisão D3 do bot, só
+    mesma escolha "esta x inteira" da decisão D3 do bot, só que aqui como
+    dois endpoints/parâmetros REST em vez de uma pergunta na conversa.
+    """
+    with get_conn() as conn:
+        gid = _get_grupo_id(conn, usuario_id)
+        with conn.cursor() as cur:
+            if gid:
+                cur.execute("SELECT * FROM gastos WHERE id = %s AND grupo_id = %s", (gasto_id, gid))
+            else:
+                cur.execute(
+                    "SELECT * FROM gastos WHERE id = %s AND usuario_id = %s AND grupo_id IS NULL",
+                    (gasto_id, usuario_id),
+                )
+            row = cur.fetchone()
+            if not row:
+                return None
+            gasto = dict(row)
+            cur.execute("DELETE FROM gastos WHERE id = %s", (gasto_id,))
+            conn.commit()
+            return gasto

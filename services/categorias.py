@@ -131,3 +131,23 @@ def remover_categoria_por_id(usuario_id: int, categoria_id: int) -> bool:
             deleted = cur.fetchone()
             conn.commit()
             return deleted is not None
+
+
+def categoria_pertence_ao_usuario(usuario_id: int, categoria_id: int) -> bool:
+    """
+    Fase D3 do AUDITORIA_E_PLANO_CADASTRO.md — usado por services/gastos.py
+    antes de gravar/atualizar um gasto. Sem essa checagem, POST/PUT
+    /api/gastos aceitava qualquer categoria_id existente no banco, mesmo
+    customizada de OUTRO grupo (cross-tenant fraco: dava pra "usar" uma
+    categoria que não é sua, embora não desse pra ler/editar o resto do
+    grupo alheio). Categoria global (grupo_id IS NULL) sempre vale, pra
+    qualquer usuário — customizada só vale pro grupo dono dela.
+    """
+    with get_conn() as conn:
+        gid = _get_grupo_id(conn, usuario_id)
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM categorias WHERE id = %s AND (grupo_id IS NULL OR grupo_id = %s)",
+                (categoria_id, gid),
+            )
+            return cur.fetchone() is not None

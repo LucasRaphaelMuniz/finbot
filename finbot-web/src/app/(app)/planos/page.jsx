@@ -37,4 +37,14 @@ export default function PlanosPage() {
               <Preco>
                 {p.preco_mensal != null ? `${brl(p.preco_mensal)}/mês` : "Em breve"}
               </Preco>
-    
+              <Membros>Até {p.max_membros} membro(s) no grupo</Membros>
+              <BotaoContratar disabled title="Contratação ainda não disponível">
+                {atual ? "Plano atual" : "Em breve"}
+              </BotaoContratar>
+            </Card>
+          );
+        })}
+      </Grid>
+    </div>
+  );
+}

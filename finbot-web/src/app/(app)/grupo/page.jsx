@@ -208,4 +208,8 @@ function FormEditarMembro({ membro, onSalvo, onErro }) {
         <TelefoneInput id="telefone-membro" value={telefone} onChange={setTelefone} />
       </Field>
       <BotaoAuth type="submit" disabled={enviando}>
-        {enviando ? "Salvando..." : "Salvar
+        {enviando ? "Salvando..." : "Salvar"}
+      </BotaoAuth>
+    </form>
+  );
+}

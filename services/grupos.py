@@ -80,4 +80,85 @@ def adicionar_membro(usuario_id: int, telefone: str):
     """
     telefone = normalizar_telefone(telefone)
     if not telefone:
-        rai
+        raise AppError("Telefone inválido — use DDD + número.", 400, "telefone_invalido")
+
+    with get_conn() as conn:
+        gid = _get_grupo_id(conn, usuario_id)
+    if not gid:
+        return None, False
+
+    limite = _limite_membros(gid)
+    if limite is not None and len(get_membros_grupo(gid)) >= limite:
+        raise AppError(
+            f"Seu plano atual permite até {limite} membro(s) no grupo. "
+            "Remova alguém ou faça upgrade de plano para adicionar mais.",
+            400, "limite_plano_excedido",
+        )
+
+    return adicionar_membro_grupo(gid, telefone)
+
+
+def atualizar_membro(usuario_id: int, membro_id: int, nome: str = None, telefone: str = None) -> dict | None:
+    """
+    Só edita membro do MESMO grupo do usuário autenticado (isolamento multi-tenant —
+    sem essa checagem, qualquer usuario_id autenticado poderia editar QUALQUER usuário
+    do banco só sabendo o id).
+
+    Telefone normalizado (Fase A, corrige F4: antes salvava cru e podia
+    colidir com o UNIQUE de usuarios.telefone, estourando erro 500 genérico
+    em vez de uma mensagem clara).
+    """
+    if telefone is not None:
+        telefone = normalizar_telefone(telefone)
+        if not telefone:
+            raise AppError("Telefone inválido — use DDD + número.", 400, "telefone_invalido")
+
+    with get_conn() as conn:
+        gid = _get_grupo_id(conn, usuario_id)
+        if not gid:
+            return None
+        sets, params = [], []
+        if nome is not None:
+            sets.append("nome = %s")
+            params.append(nome)
+        if telefone is not None:
+            sets.append("telefone = %s")
+            params.append(telefone)
+        if not sets:
+            return None
+        params += [membro_id, gid]
+        with conn.cursor() as cur:
+            try:
+                cur.execute(
+                    f"UPDATE usuarios SET {', '.join(sets)} WHERE id = %s AND grupo_id = %s RETURNING *",
+                    params,
+                )
+            except psycopg.errors.UniqueViolation:
+                conn.rollback()
+                raise AppError(
+                    "Esse número já está vinculado a outra conta.",
+                    400, "telefone_em_uso",
+                )
+            row = cur.fetchone()
+            conn.commit()
+            return dict(row) if row else None
+
+
+def remover_membro(usuario_id: int, membro_id: int) -> bool:
+    """Remove membro do grupo (mesma regra de sair_grupo do bot: volta a
+    conta individual com formas de pagamento próprias) — só que iniciado por
+    OUTRO membro do grupo, não pelo próprio."""
+    with get_conn() as conn:
+        gid = _get_grupo_id(conn, usuario_id)
+        if not gid:
+            return False
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT grupo_id FROM usuarios WHERE id = %s",
+                (membro_id,),
+            )
+            row = cur.fetchone()
+            if not row or row["grupo_id"] != gid:
+                return False
+    sair_grupo(membro_id)
+    return True

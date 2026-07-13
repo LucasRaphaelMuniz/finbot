@@ -118,4 +118,54 @@ def aceitar_convite(auth_user_id: str, nome: str, codigo: str, telefone: str = N
             if usuario:
                 cur.execute(
                     "UPDATE usuarios SET grupo_id = %s WHERE id = %s RETURNING *",
-                    (
+                    (gid, usuario["id"]),
+                )
+                usuario = dict(cur.fetchone())
+            else:
+                # Reaproveita usuario pré-existente pelo telefone pré-vinculado
+                # no convite (ex: dono já tinha adicionado esse número via
+                # `grupo add` no bot antes do convidado criar conta web). Se
+                # não veio pré-vinculado, usa o telefone que o próprio
+                # convidado informou no formulário — obrigatório nesse caso
+                # (ver docstring: sem telefone real, o membro nunca consegue
+                # usar o bot).
+                telefone_pre = convite.get("telefone")
+                if telefone_pre:
+                    telefone_final = telefone_pre
+                else:
+                    telefone_final = normalizar_telefone(telefone)
+                    if not telefone_final:
+                        raise AppError(
+                            "Informe um WhatsApp válido (com DDD) para entrar no grupo — "
+                            "é por ele que o bot reconhece você.",
+                            400, "telefone_obrigatorio",
+                        )
+                    if not esta_verificado(auth_user_id, telefone_final):
+                        raise AppError(
+                            "Confirme a posse deste WhatsApp antes de continuar (código de verificação).",
+                            403, "telefone_nao_verificado",
+                        )
+
+                cur.execute("SELECT * FROM usuarios WHERE telefone = %s", (telefone_final,))
+                usuario_existente = cur.fetchone()
+
+                if usuario_existente:
+                    cur.execute(
+                        "UPDATE usuarios SET auth_user_id = %s, grupo_id = %s WHERE id = %s RETURNING *",
+                        (auth_user_id, gid, usuario_existente["id"]),
+                    )
+                    usuario = dict(cur.fetchone())
+                else:
+                    cur.execute(
+                        "INSERT INTO usuarios (nome, telefone, auth_user_id, grupo_id) "
+                        "VALUES (%s, %s, %s, %s) RETURNING *",
+                        (nome or telefone_final, telefone_final, auth_user_id, gid),
+                    )
+                    usuario = dict(cur.fetchone())
+
+            cur.execute(
+                "UPDATE convites SET usado_em = NOW(), usado_por = %s WHERE id = %s",
+                (usuario["id"], convite["id"]),
+            )
+            conn.commit()
+            return usuario

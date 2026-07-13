@@ -20,4 +20,10 @@ ALTER TABLE gastos ADD COLUMN IF NOT EXISTS despesa_fixa_id INT REFERENCES despe
 --
 -- Cast explícito pra ::timestamp (sem fuso) na expressão do índice: sem ele,
 -- o Postgres resolve DATE_TRUNC('month', competencia) pra sobrecarga que
--
+-- recebe timestamptz (dependente do fuso da sessão) em vez da que recebe
+-- timestamp puro — e essa versão é STABLE, não IMMUTABLE, o que Postgres
+-- rejeita em expressão de índice ("functions in index expression must be
+-- marked IMMUTABLE"). Com o cast, a sobrecarga escolhida é a IMMUTABLE.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_despesa_fixa_mes
+    ON gastos (despesa_fixa_id, DATE_TRUNC('month', competencia::timestamp))
+    WHERE despesa_fixa_id IS NOT NULL;

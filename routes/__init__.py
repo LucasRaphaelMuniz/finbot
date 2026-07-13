@@ -24,4 +24,5 @@ _BLUEPRINTS = [
 
 
 def register_routes(app):
-    for 
+    for bp in _BLUEPRINTS:
+        app.register_blueprint(bp)

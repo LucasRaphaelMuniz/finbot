@@ -101,4 +101,7 @@ def interpretar_mensagem(texto: str, categorias: list[dict], formas: list[dict])
             "valor": valor,
             "categoria": _resolver_por_nome(resultado.get("categoria_sugerida"), categorias),
             "forma": _resolver_por_nome(resultado.get("forma_sugerida"), formas),
-            "descr
+            "descricao": resultado.get("descricao") or texto,
+        }
+
+    return {"intencao": "indefinido"}

@@ -99,4 +99,13 @@ export default function CadastroPage() {
           {enviando ? "Criando conta..." : "Criar conta"}
         </Botao>
         <p style={{ fontSize: 12, opacity: 0.7, textAlign: "center" }}>
-          Ao criar sua conta, você concor
+          Ao criar sua conta, você concorda com nossa{" "}
+          <a href="/politica-privacidade" target="_blank" rel="noreferrer">
+            Política de Privacidade
+          </a>.
+        </p>
+        <LinkSecundario href="/login">Já tem conta? Entrar</LinkSecundario>
+      </form>
+    </AuthCard>
+  );
+}

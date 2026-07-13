@@ -1099,4 +1099,9 @@ def _selecionar_item(mensagem: str, items: list):
 
     melhor, melhor_score = None, 0.60
     for item in items:
-        score = SequenceMatcher(None, txt_lower, it
+        score = SequenceMatcher(None, txt_lower, item["nome"].lower()).ratio()
+        if score > melhor_score:
+            melhor_score = score
+            melhor = item
+
+    return melhor

@@ -276,3 +276,33 @@ def extrair_forma_pagamento(texto: str, formas: list):
                     return forma
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# Filtro barato pra mensagens de grupo real do WhatsApp (Fase 7.4)
+# ---------------------------------------------------------------------------
+
+_COMANDOS_CONHECIDOS = (
+    "ajuda", "saldo", "resumo", "gastos", "excluir", "editar ultimo",
+    "forma ", "categoria ", "fixa ", "entrada ", "apelido ", "vincular ", "grupo",
+)
+
+
+def parece_gasto_ou_comando(texto: str) -> bool:
+    """
+    Filtro barato (sem IA), Fase 7.4 do PLANO_EXECUCAO.md: usado só em
+    mensagens de grupos reais do WhatsApp (@g.us) antes de decidir se vale
+    a pena chamar o fallback de IA (services/ai_fallback.py) — evita 1
+    requisição de LLM por mensagem de chit-chat num grupo cheio de gente
+    que não é dirigida ao bot.
+
+    Mensagens diretas (1:1) NÃO passam por esse filtro (ver app.py) — quem
+    manda pro bot ali é sempre o próprio dono da conta, sem ruído de
+    terceiros, então vale sempre tentar interpretar.
+    """
+    txt = (texto or "").strip().lower()
+    if not txt:
+        return False
+    if extrair_valor(texto) is not None:
+        return True
+    return any(txt.startswith(c) for c in _COMANDOS_CONHECIDOS)

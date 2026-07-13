@@ -178,4 +178,80 @@ def extrair_lancamentos_fatura(texto_pdf: str, categorias: list[str] | None = No
         dados = json.loads(content)
         return dados.get("lancamentos", []) or []
     except json.JSONDecodeError:
-  
+        return []
+
+
+# ---------------------------------------------------------------------------
+# Fallback de IA — classificação de mensagem não reconhecida (Fase 3.6)
+# ---------------------------------------------------------------------------
+
+_PROMPT_FALLBACK = (
+    "Você é um classificador de mensagens de um bot financeiro em português.\n"
+    "A mensagem abaixo NÃO tem um valor numérico claro nem bate em nenhum "
+    "comando conhecido do bot. Decida a intenção mais provável e responda "
+    "SOMENTE em JSON.\n\n"
+    "Chaves do JSON:\n"
+    "- intencao: uma de ['gasto', 'ajuda', 'indefinido']\n"
+    "  'gasto' só se você conseguir extrair um valor em reais razoavelmente "
+    "confiável (ex: número por extenso, valor com erro de digitação). "
+    "Caso contrário, use 'indefinido' — não invente valor.\n"
+    "- valor: número decimal (ex: 50.0) se intencao='gasto', senão null\n"
+    "- categoria_sugerida: nome curto da categoria do gasto, ou null\n"
+    "- forma_sugerida: 'Cartão', 'Pix' ou 'Ticket' (ou null)\n"
+    "- descricao: texto curto descrevendo o gasto, ou null\n\n"
+    "Mensagem: {mensagem}\n\n"
+    "Responda apenas o JSON, sem explicações."
+)
+
+
+def classificar_mensagem(texto: str) -> dict:
+    """
+    Fase 3.6 — fallback de IA para mensagens que não batem em nenhum comando
+    nem têm valor extraído pelo parser regex. `services/ai_fallback.py` já
+    filtra os casos baratos ("ajuda"/"cancelar") antes de chegar aqui, então
+    esta função só é chamada quando vale a pena gastar 1 requisição de LLM.
+    """
+    prompt = _PROMPT_FALLBACK.replace("{mensagem}", texto)
+    resp = _client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=200,
+        response_format={"type": "json_object"},
+    )
+    content = resp.choices[0].message.content
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        return {"intencao": "indefinido"}
+
+
+# ---------------------------------------------------------------------------
+# Whisper — transcrição de áudio
+# ---------------------------------------------------------------------------
+
+def transcrever_audio(audio_bytes: bytes, mimetype: str = "audio/ogg; codecs=opus") -> str:
+    """
+    Transcreve áudio (PTT/voz) via Whisper-1 em português.
+    Retorna o texto transcrito.
+    """
+    # Determina extensão pelo mimetype
+    mime_base = mimetype.split(";")[0].strip().lower()
+    ext_map = {
+        "audio/ogg":  "ogg",
+        "audio/mpeg": "mp3",
+        "audio/mp4":  "mp4",
+        "audio/wav":  "wav",
+        "audio/webm": "webm",
+        "audio/m4a":  "m4a",
+    }
+    ext = ext_map.get(mime_base, "ogg")
+
+    buf = io.BytesIO(audio_bytes)
+    buf.name = f"audio.{ext}"
+
+    transcript = _client.audio.transcriptions.create(
+        model="whisper-1",
+        file=buf,
+        language="pt",
+    )
+    return transcript.text.strip()

@@ -96,4 +96,18 @@ def deletar_sessao(usuario_id: int):
 
 
 def verificar_sessao_expirada(usuario_id: int) -> bool:
-    """Retorna True (e deleta) se e
+    """Retorna True (e deleta) se existe sessão expirada. False se não há nada."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT id FROM sessoes
+                   WHERE usuario_id = %s AND expira_em <= NOW()
+                   LIMIT 1""",
+                (usuario_id,),
+            )
+            expirada = cur.fetchone()
+            if expirada:
+                cur.execute("DELETE FROM sessoes WHERE usuario_id = %s", (usuario_id,))
+                conn.commit()
+                return True
+    return False

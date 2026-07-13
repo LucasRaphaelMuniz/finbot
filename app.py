@@ -276,4 +276,31 @@ def webhook(event_path=None):
         # completo, não tentar adivinhar antes de ouvir.
         mimetype = msg["audioMessage"].get("mimetype", "audio/ogg; codecs=opus")
         try:
-            audio_bytes  =
+            audio_bytes  = baixar_midia(data)
+            transcricao  = transcrever_audio(audio_bytes, mimetype)
+            resultado    = processar_mensagem(telefone, transcricao)
+            resposta     = f"🎤 _Ouvi: \"{transcricao}\"_\n\n{resultado}"
+
+        except Exception as e:
+            logger.error(f"Erro ao processar áudio (Whisper): {e}")
+            resposta = "😕 Não consegui entender o áudio. Tente digitar o gasto."
+
+    # ── Tipo não suportado ───────────────────────────────────────────────────
+    else:
+        # Documentos, stickers, etc. — ignora silenciosamente
+        return "", 200
+
+    if resposta:
+        enviar_mensagem(jid, resposta)
+
+    return "", 200
+
+
+@app.route("/health", methods=["GET"])
+def health():
+    return {"status": "ok"}, 200
+
+
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)

@@ -35,4 +35,6 @@ def aceitar():
         auth_user_id=g.auth_user_id,
         nome=dados.get("nome") or (g.auth_email or "").split("@")[0],
         codigo=dados.get("codigo", ""),
-        telefone=dados.get("te
+        telefone=dados.get("telefone"),
+    )
+    return usuario, 200

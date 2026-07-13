@@ -155,4 +155,91 @@ function ExclusaoConta({ ehMaster, emailUsuario, onExcluida }) {
   const [erro, setErro] = useState("");
   const [enviando, setEnviando] = useState(false);
 
-  const textoConfirmacao = ehMaster ? "EXCLU
+  const textoConfirmacao = ehMaster ? "EXCLUIR TUDO" : "EXCLUIR";
+  const podeExcluir = senha.length > 0 && concordo && confirmacao === textoConfirmacao;
+
+  async function handleExcluir() {
+    if (!podeExcluir) return;
+    setEnviando(true);
+    setErro("");
+
+    // Reautenticação por senha no cliente primeiro — dá feedback imediato
+    // se a senha estiver errada, sem round-trip pro backend. Fase D1 do
+    // AUDITORIA_E_PLANO_CADASTRO.md: o backend TAMBÉM valida a senha
+    // server-side (enviada no body do DELETE abaixo) antes de excluir —
+    // checagem no cliente sozinha não bastava (um JWT vazado/XSS ignora
+    // este código e chama a API direto).
+    const { error: erroSenha } = await supabase.auth.signInWithPassword({
+      email: emailUsuario,
+      password: senha,
+    });
+    if (erroSenha) {
+      setErro("Senha incorreta.");
+      setEnviando(false);
+      return;
+    }
+
+    try {
+      await api.delete("/conta", { data: { senha } });
+      await supabase.auth.signOut();
+      onExcluida();
+    } catch (err) {
+      setErro(err?.response?.data?.mensagem || "Não foi possível excluir a conta.");
+      setEnviando(false);
+    }
+  }
+
+  return (
+    <section style={{ border: "1px solid #f2545b", borderRadius: 10, padding: 16 }}>
+      <strong style={{ color: "#f2545b" }}>Excluir conta</strong>
+
+      {ehMaster ? (
+        <p style={{ fontSize: 13, opacity: 0.8, margin: "8px 0" }}>
+          Você criou este grupo — excluir sua conta apaga <strong>o grupo inteiro</strong>:
+          todos os membros, todos os gastos, entradas, despesas fixas e formas de
+          pagamento. Também apaga seu login. <strong>Não tem como desfazer.</strong>
+        </p>
+      ) : (
+        <p style={{ fontSize: 13, opacity: 0.8, margin: "8px 0" }}>
+          Remove seus dados pessoais e sua vinculação ao grupo. Gastos e entradas já
+          registrados no grupo permanecem para os demais membros — não são apagados.
+          Seu login não é removido automaticamente (só o master do grupo pode pedir
+          exclusão completa).
+        </p>
+      )}
+
+      <Field>
+        <label htmlFor="senha-exclusao">Confirme sua senha</label>
+        <input
+          id="senha-exclusao"
+          type="password"
+          value={senha}
+          onChange={(e) => setSenha(e.target.value)}
+        />
+      </Field>
+
+      <Field>
+        <label htmlFor="confirmar-exclusao">Digite {textoConfirmacao} para confirmar</label>
+        <input id="confirmar-exclusao" value={confirmacao} onChange={(e) => setConfirmacao(e.target.value)} />
+      </Field>
+
+      <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13, marginTop: 8 }}>
+        <input
+          type="checkbox"
+          checked={concordo}
+          onChange={(e) => setConcordo(e.target.checked)}
+          style={{ marginTop: 2 }}
+        />
+        <span>
+          Entendo que essa ação é <strong>irreversível</strong>
+          {ehMaster ? " e vai apagar os dados de todo o grupo, não só os meus." : "."}
+        </span>
+      </label>
+
+      {erro && <Mensagem $tipo="erro">{erro}</Mensagem>}
+      <button onClick={handleExcluir} disabled={!podeExcluir || enviando} style={{ marginTop: 12 }}>
+        {enviando ? "Excluindo..." : "Excluir minha conta"}
+      </button>
+    </section>
+  );
+}

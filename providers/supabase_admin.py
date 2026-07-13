@@ -59,3 +59,41 @@ def deletar_usuario_auth(auth_user_id: str) -> bool:
     except Exception as exc:
         logger.error(f"Erro ao chamar Supabase Admin API: {exc}")
         return False
+
+
+def verificar_senha(email: str, senha: str) -> bool:
+    """
+    Fase D1 do AUDITORIA_E_PLANO_CADASTRO.md (corrige F3): valida a senha do
+    usuário contra o Supabase Auth a partir do SERVIDOR, chamando o mesmo
+    endpoint de grant_type=password que o SDK do Supabase usa no cliente.
+
+    Antes desta correção, a reautenticação por senha só acontecia no
+    frontend (supabase.auth.signInWithPassword em conta/page.jsx) — um JWT
+    válido (vazado, XSS, extensão maliciosa) bastava pra chamar
+    DELETE /api/conta diretamente e apagar o grupo inteiro sem saber senha
+    nenhuma, porque o backend só conferia o Bearer token.
+
+    Sem SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY configurados, retorna False
+    (fail-closed) — diferente de `deletar_usuario_auth`, que é tolerante à
+    falta de config porque é um passo best-effort no FINAL da exclusão. Aqui
+    é o contrário: é o portão de entrada da exclusão, então a ausência de
+    config não pode significar "deixa passar".
+    """
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        logger.error(
+            "SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY não configurados — "
+            "não é possível validar senha server-side; exclusão de conta recusada."
+        )
+        return False
+
+    try:
+        resp = httpx.post(
+            f"{SUPABASE_URL}/auth/v1/token?grant_type=password",
+            json={"email": email, "password": senha},
+            headers={"apikey": SUPABASE_SERVICE_ROLE_KEY},
+            timeout=10,
+        )
+        return resp.status_code == 200
+    except Exception as exc:
+        logger.error(f"Erro ao validar senha via Supabase Auth: {exc}")
+        return False

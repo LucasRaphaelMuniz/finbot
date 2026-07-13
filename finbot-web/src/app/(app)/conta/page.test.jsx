@@ -124,4 +124,7 @@ test("senha certa + confirmação completa: reautentica antes de excluir e depoi
     })
   );
   // Fase D1 do AUDITORIA_E_PLANO_CADASTRO.md — senha vai no body do DELETE
-  // pra validação server-side também (não só
+  // pra validação server-side também (não só reautenticação no cliente).
+  expect(api.delete).toHaveBeenCalledWith("/conta", { data: { senha: "senhacerta" } });
+  await waitFor(() => expect(replace).toHaveBeenCalledWith("/login"));
+});

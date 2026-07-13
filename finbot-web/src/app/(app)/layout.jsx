@@ -56,4 +56,25 @@ export default function AppLayout({ children }) {
     api
       .get("/conta/eu")
       .then(({ data }) => setTutorialVisto(Boolean(data?.tutorial_visto)))
-      .c
+      .catch(() => setTutorialVisto(true)); // erro inesperado: não força o tour
+  }, [statusGrupo]);
+
+  if (loading || statusGrupo === "verificando") return <Loading />;
+  if (!autenticado) return null;
+  if (statusGrupo === "pendente") {
+    return <CompletarCadastro onConcluido={() => setStatusGrupo("ok")} />;
+  }
+
+  return (
+    <div style={{ display: "flex" }}>
+      <Sidebar />
+      <div style={{ flex: 1, minHeight: "100vh" }}>
+        <Header />
+        <main style={{ padding: 24 }}>{children}</main>
+      </div>
+      {tutorialVisto === false && (
+        <TourPrimeiroLogin onFechar={() => setTutorialVisto(true)} />
+      )}
+    </div>
+  );
+}
