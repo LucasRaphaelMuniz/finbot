@@ -24,10 +24,33 @@ export default function GrupoPage() {
   const [membroRemovendo, setMembroRemovendo] = useState(null);
   const [gerandoConvite, setGerandoConvite] = useState(false);
   const [ultimoConvite, setUltimoConvite] = useState(null);
+  const [telefoneNovoMembro, setTelefoneNovoMembro] = useState("");
+  const [adicionandoMembro, setAdicionandoMembro] = useState(false);
 
   function avisar(mensagem, tipo = "sucesso") {
     setToast({ mensagem, tipo });
     setTimeout(() => setToast(null), 3000);
+  }
+
+  async function adicionarMembroPorTelefone(e) {
+    e.preventDefault();
+    if (!telefoneNovoMembro) return;
+    setAdicionandoMembro(true);
+    try {
+      // Equivalente web do comando "grupo add 44912345678" do bot — mesmo
+      // endpoint (POST /api/grupo/membros) que já existia no backend desde
+      // a Fase 4.3, só faltava um formulário na tela usando ele: até aqui
+      // só dava pra adicionar gente por convite (código/link), nunca direto
+      // por telefone como no bot.
+      await api.post("/grupo/membros", { telefone: telefoneNovoMembro });
+      avisar("Membro adicionado ao grupo!");
+      setTelefoneNovoMembro("");
+      refetch();
+    } catch (err) {
+      avisar(err?.response?.data?.mensagem || "Não foi possível adicionar.", "erro");
+    } finally {
+      setAdicionandoMembro(false);
+    }
   }
 
   async function salvarNomeGrupo(e) {
@@ -91,6 +114,20 @@ export default function GrupoPage() {
         <SecaoHeader>
           <Titulo>Membros</Titulo>
         </SecaoHeader>
+
+        <NomeGrupoForm onSubmit={adicionarMembroPorTelefone} style={{ marginBottom: 20 }}>
+          <div style={{ flex: 1 }}>
+            <TelefoneInput
+              value={telefoneNovoMembro}
+              onChange={setTelefoneNovoMembro}
+              placeholder="Ex: 44912345678"
+            />
+          </div>
+          <Botao type="submit" disabled={adicionandoMembro || !telefoneNovoMembro}>
+            {adicionandoMembro ? "Adicionando..." : "+ Adicionar membro"}
+          </Botao>
+        </NomeGrupoForm>
+
         <DataTable
           columns={[
             { key: "nome", label: "Nome" },
