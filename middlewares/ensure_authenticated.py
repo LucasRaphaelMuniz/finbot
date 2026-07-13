@@ -54,7 +54,16 @@ def _decodificar_token(token: str) -> dict:
         return jwt.decode(
             token,
             signing_key.key,
-            algorithms=["RS256"],
+            # Supabase Auth hoje assina com chaves assimétricas ES256
+            # (curva elíptica P-256), não RS256 (RSA) — confirmado direto no
+            # JWKS do projeto (GET /auth/v1/.well-known/jwks.json, campo
+            # "alg"). O código original assumiu RS256 sem checar; com a
+            # allowlist errada o PyJWT rejeita QUALQUER token válido
+            # (InvalidAlgorithmError -> 401 aqui embaixo), o que causava um
+            # loop infinito dashboard->login no frontend (401 aqui deriva
+            # pro /login via interceptor do axios, mas a sessão Supabase no
+            # navegador continua válida e manda de volta pro dashboard).
+            algorithms=["ES256"],
             audience=SUPABASE_JWT_AUDIENCE,
         )
     except AppError:
