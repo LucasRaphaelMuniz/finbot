@@ -46,6 +46,14 @@ def enviar_mensagem(jid: str, texto: str) -> bool:
         )
         resp.raise_for_status()
         return True
+    except httpx.HTTPStatusError as e:
+        # Corpo da resposta incluído no log: a Evolution devolve o motivo
+        # real do 4xx no body (ex: instância desconectada, número inválido),
+        # e só o status não permite diagnosticar nada.
+        logger.error(
+            f"Falha ao enviar mensagem via Evolution API: {e} — corpo: {e.response.text[:500]}"
+        )
+        return False
     except Exception as e:
         logger.error(f"Falha ao enviar mensagem via Evolution API: {e}")
         return False
