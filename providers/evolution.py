@@ -37,10 +37,18 @@ def enviar_mensagem(jid: str, texto: str) -> bool:
     (Evolution fora do ar = não dá pra confirmar posse do número = fail-closed
     por design, ver AUDITORIA_E_PLANO_CADASTRO.md, tabela de riscos).
     """
+    # Envia só os dígitos, nunca o JID completo: nosso formato canônico de
+    # armazenamento inclui o 9º dígito por heurística (utils/telefone.py),
+    # mas contas antigas do WhatsApp têm JID SEM o 9 — se mandarmos
+    # '5544999...@s.whatsapp.net' pronto, a Evolution confia no formato e
+    # devolve 400 exists:false. Com dígitos puros ela resolve a variante
+    # com/sem 9 sozinha e entrega no JID certo. Grupos (@g.us) passam
+    # intactos: o id do grupo não é telefone.
+    numero = jid.split("@")[0] if jid.endswith("@s.whatsapp.net") else jid
     try:
         resp = httpx.post(
             f"{EVOLUTION_URL}/message/sendText/{EVOLUTION_INSTANCE}",
-            json={"number": jid, "text": texto},
+            json={"number": numero, "text": texto},
             headers={"apikey": EVOLUTION_KEY},
             timeout=45,
         )
