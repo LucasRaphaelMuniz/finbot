@@ -60,4 +60,78 @@ def completar_onboarding(auth_user_id: str, nome: str, nome_grupo: str, telefone
 
             # Reaproveita usuario pré-existente pelo telefone (já usava o bot
             # antes de criar conta web) em vez de duplicar — só linka o
-            #
+            # auth_user_id nesse registro. Verificação acima já garante que
+            # quem está pedindo isso realmente tem o WhatsApp em mãos.
+            cur.execute("SELECT * FROM usuarios WHERE telefone = %s", (telefone,))
+            usuario_row = cur.fetchone()
+
+            veio_do_bot = usuario_row is not None
+
+            if usuario_row:
+                cur.execute(
+                    "UPDATE usuarios SET auth_user_id = %s WHERE id = %s RETURNING *",
+                    (auth_user_id, usuario_row["id"]),
+                )
+                usuario = dict(cur.fetchone())
+            else:
+                # F6: dois requests concorrentes (duplo clique) podem passar
+                # ambos pelo SELECT de `existente` sem achar nada — ON CONFLICT
+                # + re-select evita o 500 de UniqueViolation em auth_user_id
+                # que acontecia antes (o segundo request recebe o registro que
+                # o primeiro acabou de criar, em vez de derrubar).
+                cur.execute(
+                    "INSERT INTO usuarios (nome, telefone, auth_user_id) VALUES (%s, %s, %s) "
+                    "ON CONFLICT (auth_user_id) DO NOTHING RETURNING *",
+                    (nome or telefone, telefone, auth_user_id),
+                )
+                row = cur.fetchone()
+                if not row:
+                    cur.execute("SELECT * FROM usuarios WHERE auth_user_id = %s", (auth_user_id,))
+                    row = cur.fetchone()
+                usuario = dict(row)
+
+            uid = usuario["id"]
+
+            # Grupo só é criado se o usuário (novo ou reaproveitado do bot)
+            # ainda não tiver um — cobre os 3 cenários do B3: número novo,
+            # número do bot sem grupo (ambos precisam de nome_grupo), e
+            # número do bot COM grupo (não entra aqui, nome_grupo é ignorado
+            # de propósito — o grupo já existe, é o "puxa tudo" do merge).
+            if not usuario.get("grupo_id"):
+                if not nome_grupo:
+                    raise AppError(
+                        "Nome do grupo é obrigatório para criar uma conta nova.",
+                        400, "campos_obrigatorios",
+                    )
+                # criador_id (migração 010) marca quem pode apagar o grupo
+                # inteiro depois — ver services/conta.py.
+                cur.execute(
+                    "INSERT INTO grupos (nome, criador_id) VALUES (%s, %s) RETURNING *",
+                    (nome_grupo, uid),
+                )
+                grupo = dict(cur.fetchone())
+                cur.execute(
+                    "UPDATE usuarios SET grupo_id = %s WHERE id = %s", (grupo["id"], uid)
+                )
+                usuario["grupo_id"] = grupo["id"]
+
+                for nome_forma, limite in FORMAS_PADRAO:
+                    cur.execute(
+                        "INSERT INTO formas_pagamento (usuario_id, grupo_id, nome, limite_mensal) "
+                        "VALUES (%s, %s, %s, %s)",
+                        (uid, grupo["id"], nome_forma, limite),
+                    )
+
+            conn.commit()
+            usuario["veio_do_bot"] = veio_do_bot
+
+            if veio_do_bot:
+                # Defesa em profundidade do F2 (a pessoa fica sabendo se
+                # alguém vinculou aquele número) + tutorial reverso (Fase C3).
+                enviar_mensagem(
+                    telefone,
+                    "✅ Sua conta web foi vinculada a este número.\n"
+                    "Seus registros (gastos, grupo, formas de pagamento) já aparecem no site.",
+                )
+
+            return usuario
