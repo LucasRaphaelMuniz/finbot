@@ -37,6 +37,14 @@ jest.mock("@/hooks/useAuth", () => ({
   }),
 }));
 
+// ContaPage renderiza <TemaToggle>, que chama useTema() — sem esse mock o
+// teste quebra com "useTema precisa estar dentro de <ThemeRegistry>"
+// (ver components/ThemeRegistry), já que aqui a página é renderizada sem
+// os providers do app/layout.jsx real.
+jest.mock("@/components/ThemeRegistry", () => ({
+  useTema: () => ({ tema: "dark", setTema: jest.fn() }),
+}));
+
 // Um mock por teste decide se "eu" sou o master (criador_id === meu id) ou
 // um membro comum — é essa distinção que muda o texto de confirmação
 // exigido e o que a exclusão realmente apaga (ver services/conta.py).

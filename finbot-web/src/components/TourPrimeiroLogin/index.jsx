@@ -17,8 +17,9 @@
 import { useState } from "react";
 import Modal from "@/components/Modal";
 import api from "@/services/api";
-import { Passo, Botoes } from "./styles";
+import { Passo, Botoes, WhatsBotao, NumeroBot } from "./styles";
 import { VEIO_DO_BOT_KEY } from "@/utils/constants";
+import { formatarTelefoneExibicao } from "@/utils/format";
 
 const NUMERO_BOT = process.env.NEXT_PUBLIC_BOT_WHATSAPP || "";
 
@@ -53,12 +54,12 @@ function montarPassos(veioDoBot) {
       linkTexto: "Mandar \"oi\" agora",
     },
     {
-      titulo: "Registre seu primeiro gasto",
-      texto: 'Pelo WhatsApp, é só mandar algo como: "50 mercado cartão"',
-    },
-    {
       titulo: "Configure formas e limites",
       texto: "Ajuste na tela Formas de pagamento — cartão, pix, o que fizer sentido pra você.",
+    },
+    {
+      titulo: "Registre seu primeiro gasto",
+      texto: 'Pelo WhatsApp, é só mandar algo como: "50 mercado cartão"',
     },
     {
       titulo: "Convide alguém pro grupo",
@@ -92,9 +93,12 @@ export default function TourPrimeiroLogin({ onFechar }) {
         <strong>{atual.titulo}</strong>
         <p>{atual.texto}</p>
         {atual.link && (
-          <a href={atual.link} target="_blank" rel="noreferrer">
-            {atual.linkTexto}
-          </a>
+          <>
+            <WhatsBotao href={atual.link} target="_blank" rel="noreferrer">
+              💬 {atual.linkTexto}
+            </WhatsBotao>
+            <NumeroBot>{formatarTelefoneExibicao(NUMERO_BOT)}</NumeroBot>
+          </>
         )}
       </Passo>
       <Botoes>

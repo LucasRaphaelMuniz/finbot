@@ -56,7 +56,10 @@ export const Form = styled.form`
   display: flex;
   flex-direction: column;
   gap: ${({ theme }) => theme.spacing(4)};
-  min-width: 320px;
+  // width (não min-width): preenche o Box do Modal em vez de impor um piso
+  // de 320px que podia estourar a largura do Box em telas bem estreitas
+  // (ver components/Modal/styles.js).
+  width: 100%;
 `;
 
 export const Field = styled.div`

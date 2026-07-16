@@ -48,6 +48,7 @@ def atualizar(fixa_id):
         descricao=dados.get("descricao"), valor=dados.get("valor"),
         dia_lancamento=dados.get("dia_lancamento"), categoria_id=dados.get("categoria_id"),
         forma_pagamento_id=dados.get("forma_pagamento_id"),
+        aplicar_a_partir=dados.get("aplicar_a_partir", "imediato"),
     )
     if not fixa:
         raise AppError("Despesa fixa não encontrada (ou nenhum campo pra atualizar).", 404, "nao_encontrado")

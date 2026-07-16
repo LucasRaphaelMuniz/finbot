@@ -11,4 +11,12 @@ const customJestConfig = {
   testEnvironment: "jest-environment-jsdom",
   // next/jest NÃO lê o "paths" do jsconfig.json sozinho — isso resolve o
   // alias @/* em tempo de build (webpack/SWC), não em tempo de teste (Jest
-  // usa o próprio resolver). Se
+  // usa o próprio resolver). Sem isso, todo import "@/..." falha com
+  // "Cannot find module" no jest, mesmo funcionando normal no `next dev`.
+  moduleNameMapper: {
+    "^@/(.*)$": "<rootDir>/src/$1",
+  },
+  testPathIgnorePatterns: ["<rootDir>/.next/", "<rootDir>/node_modules/"],
+};
+
+module.exports = createJestConfig(customJestConfig);

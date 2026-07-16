@@ -28,6 +28,21 @@ const GlobalStyle = createGlobalStyle`
     color: inherit;
   }
 
+  /* checkbox/radio "crus" (sem styled-component próprio, ex: os das telas
+     Categorias, Formas, Despesas fixas) caem no controle nativo do SO —
+     em dark mode isso normalmente já é claro o bastante pra ver, mas fica
+     cinza genérico, sem nenhuma relação com a cor do tema. accent-color é
+     suportado nos browsers relevantes (Chrome/Edge/Firefox atuais) e
+     recolore o controle nativo sem precisar reconstruir checkbox do zero
+     com markup/CSS customizado — muito menos código pra um ajuste visual
+     pontual. */
+  input[type="checkbox"], input[type="radio"] {
+    accent-color: ${({ theme }) => theme.colors.primary};
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+  }
+
   /* Estilo padrão pra <button> "cru" (sem componente estilizado próprio).
      Antes só herdava a cor do texto do tema (quase branca) sem nunca
      definir um background — caía no cinza claro padrão do navegador,

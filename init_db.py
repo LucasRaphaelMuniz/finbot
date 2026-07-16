@@ -99,4 +99,63 @@ CATEGORIAS = [
 # Fase 6 (P6, preço definido pelo Lucas em 11/07/2026) + Fase 6.2:
 # max_membros é o que services/grupos.py::adicionar_membro usa pra bloquear
 # excedente. "unlimited" com max_membros=10 é "soft limit" (nome do plano
-# promete ilimitado, mas o e
+# promete ilimitado, mas o enforcement real trava em 10 — decisão de
+# produto, não bug). preco_mensal é o único ciclo definido por ora;
+# semestral/anual ficam NULL até existir promoção de ciclo mais longo.
+PLANOS = [
+    # (nome, max_membros, preco_mensal)
+    ("basic", 1, 14.90),
+    ("plus", 2, 19.90),
+    ("master", 5, 29.90),
+    ("unlimited", 10, 49.90),
+]
+
+
+def main():
+    conn = psycopg.connect(os.getenv("DATABASE_URL"))
+    cur  = conn.cursor()
+
+    print("→ Criando tabelas base (pré-migrações)...")
+    cur.execute(SCHEMA)
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    # As migrações (001_categorias_por_grupo) trocam o UNIQUE(nome) de `categorias`
+    # por um índice único (COALESCE(grupo_id, 0), LOWER(nome)) — precisam rodar
+    # antes do seed abaixo, senão o ON CONFLICT do seed teria como alvo uma
+    # constraint que não existe mais em bancos onde as migrações já rodaram.
+    print("→ Aplicando migrações...")
+    aplicar_migracoes()
+
+    print("→ Inserindo categorias padrão (globais, grupo_id NULL)...")
+    conn = psycopg.connect(os.getenv("DATABASE_URL"))
+    cur  = conn.cursor()
+    for cat in CATEGORIAS:
+        cur.execute(
+            "INSERT INTO categorias (nome) VALUES (%s) "
+            "ON CONFLICT (COALESCE(grupo_id, 0), LOWER(nome)) DO NOTHING",
+            (cat,),
+        )
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    print("→ Inserindo planos padrão (Fase 6, preços definidos em 11/07/2026)...")
+    conn = psycopg.connect(os.getenv("DATABASE_URL"))
+    cur  = conn.cursor()
+    for nome, max_membros, preco_mensal in PLANOS:
+        cur.execute(
+            "INSERT INTO planos (nome, max_membros, preco_mensal) VALUES (%s, %s, %s) "
+            "ON CONFLICT (nome) DO UPDATE SET max_membros = EXCLUDED.max_membros, "
+            "preco_mensal = EXCLUDED.preco_mensal",
+            (nome, max_membros, preco_mensal),
+        )
+    conn.commit()
+    cur.close()
+    conn.close()
+    print("✅ Banco inicializado com sucesso.")
+
+
+if __name__ == "__main__":
+    main()

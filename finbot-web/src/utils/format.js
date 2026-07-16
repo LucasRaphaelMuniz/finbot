@@ -28,6 +28,25 @@ export function formatarDataBR(isoDate) {
   return `${dia}/${mes}/${ano}`;
 }
 
+// Formata número de WhatsApp só pra EXIBIÇÃO (mesma filosofia do
+// TelefoneInput: quem decide o JID "de verdade" é utils/telefone.py no
+// backend, isso aqui é só cosmético). Espera dígitos com DDI, ex:
+// "5544912345678" → "+55 (44) 91234-5678".
+export function formatarTelefoneExibicao(numero) {
+  if (!numero) return "";
+  let digitos = String(numero).replace(/\D/g, "");
+  if (digitos.length === 12 || digitos.length === 13) {
+    if (digitos.startsWith("55")) digitos = digitos.slice(2);
+  }
+  if (digitos.length < 10) return `+55 ${digitos}`;
+  const ddd = digitos.slice(0, 2);
+  const resto = digitos.slice(2);
+  const parteFinal = resto.length === 9
+    ? `${resto.slice(0, 5)}-${resto.slice(5)}`
+    : `${resto.slice(0, 4)}-${resto.slice(4)}`;
+  return `+55 (${ddd}) ${parteFinal}`;
+}
+
 // Converte string BR ("1.234,56" ou "45,90") em number — usado pelo
 // MoneyInput ao enviar pra API.
 export function parseValorBR(texto) {

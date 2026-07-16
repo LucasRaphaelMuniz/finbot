@@ -52,7 +52,19 @@ export default function FixasPage() {
       <DataTable
         columns={[
           { key: "descricao", label: "Descrição" },
-          { key: "valor", label: "Valor", render: (f) => brl(f.valor) },
+          {
+            key: "valor", label: "Valor",
+            render: (f) => (
+              <>
+                {brl(f.valor)}
+                {f.valor_pendente != null && (
+                  <div style={{ fontSize: 12, opacity: 0.7 }}>
+                    {brl(f.valor_pendente)} a partir do próximo lançamento
+                  </div>
+                )}
+              </>
+            ),
+          },
           { key: "dia_lancamento", label: "Todo dia" },
         ]}
         rows={dados?.itens}
@@ -93,14 +105,34 @@ export default function FixasPage() {
   );
 }
 
+// Réplica em JS do truque de _dia_efetivo() no backend (services/despesas_fixas.py):
+// dia_lancamento=31 num mês de 30 dias cai no último dia do mês, não "nunca lança".
+function ultimoDiaDoMes(ano, mesUmIndexado) {
+  return new Date(ano, mesUmIndexado, 0).getDate();
+}
+
 function FormFixa({ fixa, onSalvo, onErro }) {
   const [descricao, setDescricao] = useState(fixa?.descricao || "");
   const [valor, setValor] = useState(fixa?.valor || 0);
   const [dia, setDia] = useState(fixa?.dia_lancamento || "");
   const [categoriaId, setCategoriaId] = useState(fixa?.categoria_id || null);
   const [formaId, setFormaId] = useState(fixa?.forma_pagamento_id || null);
+  const [aplicarAPartir, setAplicarAPartir] = useState("imediato");
   const [erro, setErro] = useState("");
   const [enviando, setEnviando] = useState(false);
+
+  // Só pergunta "a partir de quando" quando faz diferença de verdade: editando
+  // uma fixa existente, mudando o valor, E o lançamento deste mês ainda não
+  // aconteceu (dia_lancamento à frente de hoje). Depois que o dia passou,
+  // mudar o valor só afeta o próximo lançamento de qualquer jeito — perguntar
+  // seria ruído (ver services/despesas_fixas.py::atualizar_despesa_fixa).
+  const hoje = new Date();
+  const diaEfetivoMes = fixa?.dia_lancamento
+    ? Math.min(fixa.dia_lancamento, ultimoDiaDoMes(hoje.getFullYear(), hoje.getMonth() + 1))
+    : null;
+  const aindaNaoLancouEsseMes = diaEfetivoMes != null && hoje.getDate() < diaEfetivoMes;
+  const valorMudou = !!fixa && Number(valor) !== Number(fixa.valor);
+  const precisaEscolherVigencia = !!fixa && valorMudou && aindaNaoLancouEsseMes;
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -113,6 +145,7 @@ function FormFixa({ fixa, onSalvo, onErro }) {
     const payload = {
       descricao, valor, dia_lancamento: Number(dia),
       categoria_id: categoriaId, forma_pagamento_id: formaId,
+      aplicar_a_partir: precisaEscolherVigencia ? aplicarAPartir : "imediato",
     };
     try {
       if (fixa) {
@@ -150,6 +183,27 @@ function FormFixa({ fixa, onSalvo, onErro }) {
         <label htmlFor="forma-fixa">Forma de pagamento (opcional)</label>
         <FormaSelect id="forma-fixa" value={formaId} onChange={setFormaId} incluirTodas />
       </Field>
+      {precisaEscolherVigencia && (
+        <Field>
+          <label>Esse reajuste vale a partir de quando?</label>
+          <label style={{ fontWeight: "normal", display: "flex", gap: 6, alignItems: "center" }}>
+            <input
+              type="radio" name="aplicar-a-partir" value="imediato"
+              checked={aplicarAPartir === "imediato"}
+              onChange={() => setAplicarAPartir("imediato")}
+            />
+            Já no lançamento deste mês (dia {diaEfetivoMes})
+          </label>
+          <label style={{ fontWeight: "normal", display: "flex", gap: 6, alignItems: "center" }}>
+            <input
+              type="radio" name="aplicar-a-partir" value="proximo_mes"
+              checked={aplicarAPartir === "proximo_mes"}
+              onChange={() => setAplicarAPartir("proximo_mes")}
+            />
+            Só a partir do lançamento do mês que vem (este mês mantém {brl(fixa.valor)})
+          </label>
+        </Field>
+      )}
       {erro && <div style={{ color: "#f2545b", fontSize: 13 }}>{erro}</div>}
       <SalvarBtn type="submit" disabled={enviando}>{enviando ? "Salvando..." : "Salvar"}</SalvarBtn>
     </form>

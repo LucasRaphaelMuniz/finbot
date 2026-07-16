@@ -182,14 +182,32 @@ def excluir_conta(usuario_id: int, email: str, senha: str) -> dict:
 def get_meu_status(usuario_id: int) -> dict:
     """Usado por GET /api/conta/eu — endpoint leve que o TourPrimeiroLogin
     (finbot-web) consulta ao montar o layout, sem precisar buscar o grupo
-    inteiro só pra saber se já viu o tour."""
+    inteiro só pra saber se já viu o tour. `tema` (migração 018) pegou
+    carona aqui pelo mesmo motivo: já é consultado 1x por carregamento do
+    app, não precisa de rota própria só pra isso."""
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT tutorial_web_visto_em FROM usuarios WHERE id = %s", (usuario_id,)
+                "SELECT tutorial_web_visto_em, tema FROM usuarios WHERE id = %s", (usuario_id,)
             )
             row = cur.fetchone()
-            return {"tutorial_visto": bool(row and row["tutorial_web_visto_em"])}
+            return {
+                "tutorial_visto": bool(row and row["tutorial_web_visto_em"]),
+                "tema": row["tema"] if row else "dark",
+            }
+
+
+def atualizar_tema(usuario_id: int, tema: str) -> dict:
+    """Grava a preferência de tema na conta (não em localStorage) — pedido
+    explícito do Lucas: precisa seguir o usuário entre dispositivos, não só
+    o navegador onde ele clicou o toggle."""
+    if tema not in ("dark", "light"):
+        raise AppError("tema precisa ser 'dark' ou 'light'.", 400, "tema_invalido")
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE usuarios SET tema = %s WHERE id = %s", (tema, usuario_id))
+            conn.commit()
+    return {"tema": tema}
 
 
 def marcar_tutorial_visto(usuario_id: int, visto: bool = True) -> dict:

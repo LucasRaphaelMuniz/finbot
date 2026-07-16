@@ -14,6 +14,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
+import { useTema } from "@/components/ThemeRegistry";
 import api from "@/services/api";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
@@ -23,11 +24,16 @@ import TourPrimeiroLogin from "@/components/TourPrimeiroLogin";
 
 export default function AppLayout({ children }) {
   const { loading, autenticado } = useAuth();
+  const { setTema } = useTema();
   const router = useRouter();
   const [statusGrupo, setStatusGrupo] = useState("verificando"); // verificando | ok | pendente
   // Fase C do AUDITORIA_E_PLANO_CADASTRO.md — null enquanto não sabemos
   // ainda (evita "piscar" o tour antes do GET /conta/eu responder).
   const [tutorialVisto, setTutorialVisto] = useState(null);
+  // Menu gaveta do mobile (Sidebar/Header — ver seus styles.js pro
+  // breakpoint de 860px). No desktop esse estado é irrelevante: a Nav
+  // ignora `aberta` via CSS e fica sempre visível.
+  const [menuAberto, setMenuAberto] = useState(false);
 
   useEffect(() => {
     if (!loading && !autenticado) {
@@ -55,9 +61,15 @@ export default function AppLayout({ children }) {
     if (statusGrupo !== "ok") return;
     api
       .get("/conta/eu")
-      .then(({ data }) => setTutorialVisto(Boolean(data?.tutorial_visto)))
+      .then(({ data }) => {
+        setTutorialVisto(Boolean(data?.tutorial_visto));
+        // Sincroniza com o valor salvo na conta (pode ter mudado em outro
+        // dispositivo) — se bater com o que já tava no cache local, isso é
+        // um no-op visual, sem flash.
+        if (data?.tema === "light" || data?.tema === "dark") setTema(data.tema);
+      })
       .catch(() => setTutorialVisto(true)); // erro inesperado: não força o tour
-  }, [statusGrupo]);
+  }, [statusGrupo, setTema]);
 
   if (loading || statusGrupo === "verificando") return <Loading />;
   if (!autenticado) return null;
@@ -67,9 +79,9 @@ export default function AppLayout({ children }) {
 
   return (
     <div style={{ display: "flex" }}>
-      <Sidebar />
-      <div style={{ flex: 1, minHeight: "100vh" }}>
-        <Header />
+      <Sidebar aberta={menuAberto} onFechar={() => setMenuAberto(false)} />
+      <div style={{ flex: 1, minHeight: "100vh", minWidth: 0 }}>
+        <Header onAbrirMenu={() => setMenuAberto(true)} />
         <main style={{ padding: 24 }}>{children}</main>
       </div>
       {tutorialVisto === false && (

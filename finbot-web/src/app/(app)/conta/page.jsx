@@ -6,6 +6,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
+import { useTema } from "@/components/ThemeRegistry";
 import { useApi } from "@/hooks/useApi";
 import { supabase } from "@/lib/supabase";
 import api from "@/services/api";
@@ -36,6 +37,8 @@ export default function ContaPage() {
         <p style={{ opacity: 0.7, fontSize: 13 }}>E-mail</p>
         <p>{user?.email}</p>
       </section>
+
+      <TemaToggle onErro={(m) => avisar(m, "erro")} />
 
       <NomeForm onSalvo={() => avisar("Nome atualizado.")} onErro={(m) => avisar(m, "erro")} />
       <SenhaForm onSalvo={() => avisar("Senha alterada.")} onErro={(m) => avisar(m, "erro")} />
@@ -71,6 +74,39 @@ export default function ContaPage() {
 
       <Toast mensagem={toast?.mensagem} tipo={toast?.tipo} />
     </div>
+  );
+}
+
+function TemaToggle({ onErro }) {
+  // Otimista: troca a tela na hora (useTema já grava no localStorage, ver
+  // ThemeRegistry) e só depois confirma no backend. Se a API recusar,
+  // desfaz — sem isso a pessoa clicaria e ficaria olhando pra tela parada
+  // até a resposta do PUT voltar.
+  const { tema, setTema } = useTema();
+  const [salvando, setSalvando] = useState(false);
+
+  async function alternar() {
+    const anterior = tema;
+    const novo = tema === "dark" ? "light" : "dark";
+    setTema(novo);
+    setSalvando(true);
+    try {
+      await api.put("/conta/tema", { tema: novo });
+    } catch (err) {
+      setTema(anterior);
+      onErro(err?.response?.data?.mensagem || "Não foi possível salvar o tema.");
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  return (
+    <section>
+      <p style={{ opacity: 0.7, fontSize: 13, marginBottom: 8 }}>Tema</p>
+      <button onClick={alternar} disabled={salvando}>
+        {tema === "dark" ? "🌙 Escuro" : "☀️ Claro"} — trocar para {tema === "dark" ? "claro" : "escuro"}
+      </button>
+    </section>
   );
 }
 

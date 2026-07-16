@@ -36,6 +36,18 @@ export default function CategoriasPage() {
     }
   }
 
+  // Vale pra categoria padrão também (só ela, não a customizada de outro
+  // grupo) — a API decide o que fazer com cada caso (ver
+  // services/categorias.py::alternar_categoria_ativa).
+  async function alternarAtivo(categoria) {
+    try {
+      await api.put(`/categorias/${categoria.id}/ativo`, { ativo: !categoria.ativo });
+      refetch();
+    } catch (err) {
+      avisar(err?.response?.data?.mensagem || "Não foi possível atualizar.", "erro");
+    }
+  }
+
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 24 }}>
@@ -48,6 +60,17 @@ export default function CategoriasPage() {
           {
             key: "nome", label: "Nome",
             render: (c) => c.nome + (c.grupo_id == null ? "  (padrão)" : ""),
+          },
+          {
+            key: "ativo", label: "Ativa",
+            render: (c) => (
+              <input
+                type="checkbox"
+                checked={c.ativo}
+                onChange={() => alternarAtivo(c)}
+                title={c.ativo ? "Desativar (some do seletor de novo gasto)" : "Ativar"}
+              />
+            ),
           },
         ]}
         rows={dados?.itens}

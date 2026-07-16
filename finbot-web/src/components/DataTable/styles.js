@@ -1,5 +1,15 @@
 import styled from "styled-components";
 
+// Tabelas com muitas colunas (gastos: Data/Descrição/Categoria/Forma/
+// Membro/Origem/Valor + Ações) não cabem numa tela de celular de jeito
+// nenhum — sem esse wrapper, width:100% na Table forçava as colunas a
+// espremer/sobrepor em vez de simplesmente rolar horizontalmente, que é o
+// comportamento esperado numa tabela grande em tela pequena.
+export const TableWrap = styled.div`
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+`;
+
 export const Table = styled.table`
   width: 100%;
   border-collapse: collapse;

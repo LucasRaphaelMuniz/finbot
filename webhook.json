@@ -1,0 +1,1 @@
+{"webhook":{"enabled":true,"url":"https://web-production-4220a.up.railway.app/webhook","headers":{"apikey":"finbot123"},"events":["MESSAGES_UPSERT"],"byEvents":true,"base64":true}}

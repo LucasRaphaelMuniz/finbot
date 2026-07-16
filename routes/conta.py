@@ -7,7 +7,7 @@ precisam poder se excluir — @requer_grupo bloquearia esse caso com 404
 from flask import Blueprint, request, g
 
 from middlewares.ensure_authenticated import ensure_authenticated
-from services.conta import excluir_conta, get_meu_status, marcar_tutorial_visto
+from services.conta import excluir_conta, get_meu_status, marcar_tutorial_visto, atualizar_tema
 from utils.app_error import AppError
 
 bp = Blueprint("conta", __name__, url_prefix="/api/conta")
@@ -41,3 +41,14 @@ def tutorial_visto():
         raise AppError("Cadastro ainda não concluído.", 404, "sem_grupo")
     dados = request.get_json(silent=True) or {}
     return marcar_tutorial_visto(g.usuario_id, dados.get("visto", True))
+
+
+@bp.route("/tema", methods=["PUT"])
+@ensure_authenticated
+def tema():
+    # Sem @requer_grupo de propósito — mesma razão de excluir(): conta
+    # individual (ainda sem grupo) também tem tema.
+    if not g.usuario_id:
+        raise AppError("Cadastro ainda não concluído.", 404, "sem_grupo")
+    dados = request.get_json(silent=True) or {}
+    return atualizar_tema(g.usuario_id, dados.get("tema", ""))

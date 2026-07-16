@@ -116,7 +116,7 @@ export default function LancamentosPage() {
         <MesPicker value={mes} onChange={setMes} />
         {aba === "gastos" && (
           <>
-            <CategoriaSelect value={filtroCategoria} onChange={setFiltroCategoria} incluirTodas />
+            <CategoriaSelect value={filtroCategoria} onChange={setFiltroCategoria} incluirTodas apenasAtivas={false} />
             <FormaSelect value={filtroForma} onChange={setFiltroForma} incluirTodas />
           </>
         )}
