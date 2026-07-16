@@ -35,7 +35,18 @@ export const Tr = styled.tr`
   }
 `;
 
+// Antes tinha display:flex direto aqui — um <td> com display:flex deixa de
+// se comportar como table-cell (sai do table-layout normal). Numa linha
+// onde essa célula fica vazia (categoria padrão sem Editar/Remover), a
+// borda inferior dela não alinha mais com a altura das colunas vizinhas —
+// aparece como a linha divisória "quebrando" bem na coluna Ações. Fix:
+// <td> continua puro table-cell (border/altura corretos), o flex vai pra
+// uma div por dentro.
 export const AcoesTd = styled(Td)`
+  text-align: right;
+`;
+
+export const AcoesFlex = styled.div`
   display: flex;
   gap: ${({ theme }) => theme.spacing(2)};
   justify-content: flex-end;

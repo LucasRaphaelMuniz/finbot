@@ -62,16 +62,11 @@ export const Form = styled.form`
   width: 100%;
 `;
 
-export const Field = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: ${({ theme }) => theme.spacing(1)};
-
-  label {
-    font-size: 13px;
-    color: ${({ theme }) => theme.colors.textMuted};
-  }
-`;
+// Field saiu daqui — essa versão só estilizava o <label>, não o <input>
+// (diferente de components/AuthCard/styles.js, que também estiliza input),
+// e era a causa do campo Descrição aparecer sem estilo (fundo branco
+// padrão do browser) no modal de lançamento. page.jsx agora importa Field
+// de @/components/AuthCard/styles, igual formas/categorias/fixas já faziam.
 
 export const ToggleTipo = styled.div`
   display: flex;

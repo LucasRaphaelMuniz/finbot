@@ -6,7 +6,7 @@
 // pra não engessar quais ações cada tela precisa.
 import EmptyState from "@/components/EmptyState";
 import Loading from "@/components/Loading";
-import { TableWrap, Table, Th, Td, Tr, AcoesTd } from "./styles";
+import { TableWrap, Table, Th, Td, Tr, AcoesTd, AcoesFlex } from "./styles";
 
 export default function DataTable({ columns, rows, loading, vazio, acoes }) {
   if (loading) return <Loading />;
@@ -31,7 +31,7 @@ export default function DataTable({ columns, rows, loading, vazio, acoes }) {
               {columns.map((col) => (
                 <Td key={col.key}>{col.render ? col.render(row) : row[col.key]}</Td>
               ))}
-              {acoes && <AcoesTd>{acoes(row)}</AcoesTd>}
+              {acoes && <AcoesTd><AcoesFlex>{acoes(row)}</AcoesFlex></AcoesTd>}
             </Tr>
           ))}
         </tbody>

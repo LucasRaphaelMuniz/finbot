@@ -17,8 +17,9 @@ import CategoriaSelect from "@/components/CategoriaSelect";
 import FormaSelect from "@/components/FormaSelect";
 import MoneyInput from "@/components/MoneyInput";
 import Toast from "@/components/Toast";
+import { Field } from "@/components/AuthCard/styles";
 import {
-  Header, Abas, Aba, Filtros, BotaoNovo, Form, Field,
+  Header, Abas, Aba, Filtros, BotaoNovo, Form,
   ToggleTipo, ToggleBtn, Erro, SalvarBtn,
 } from "./styles";
 
