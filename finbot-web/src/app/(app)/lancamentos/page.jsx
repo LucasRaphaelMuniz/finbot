@@ -63,6 +63,22 @@ export default function LancamentosPage() {
     else refetchEntradas();
   }
 
+  // Botão "Confirmar" nas linhas previstas (custo fixo ainda sem gasto real
+  // pra esse mês — ver services/gastos.py::_projetar_despesas_fixas). É um
+  // catch-up manual, não o caminho automático de verdade: isso é o cron
+  // (jobs/lancar_fixas.py) que ainda precisa ser configurado no Railway —
+  // uma vez configurado, o gasto real já aparece direto, sem passar por
+  // "previsto" nem precisar desse clique.
+  async function handleConfirmarFixa(row) {
+    try {
+      await api.post(`/fixas/${row.despesa_fixa_id}/confirmar`, { competencia: mes });
+      avisar(`"${row.descricao}" confirmado.`);
+      refetchAtual();
+    } catch (err) {
+      avisar(err?.response?.data?.mensagem || "Não foi possível confirmar.", "erro");
+    }
+  }
+
   async function handleExcluir(escopo = "unico") {
     try {
       if (aba === "gastos") {
@@ -137,9 +153,11 @@ export default function LancamentosPage() {
           // Linha projetada (custo fixo previsto, ainda sem gasto real —
           // ver services/gastos.py::_projetar_despesas_fixas) não tem um
           // /api/gastos/:id de verdade por trás pra editar/excluir; "id" é
-          // uma string sintética só pra servir de key no React.
+          // uma string sintética só pra servir de key no React. Confirmar
+          // aqui é catch-up manual, não o caminho automático (esse depende
+          // do cron configurado no Railway).
           row.projetado ? (
-            <span style={{ fontSize: 13, opacity: 0.6 }}>previsto</span>
+            <AcaoBtn onClick={() => handleConfirmarFixa(row)}>Confirmar</AcaoBtn>
           ) : (
             <>
               <AcaoBtn onClick={() => setModalEditar(row)}>Editar</AcaoBtn>

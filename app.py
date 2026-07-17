@@ -8,6 +8,8 @@ Tipos de mensagem tratados:
 """
 
 import os
+import threading
+import time
 from datetime import date, datetime, timedelta, timezone
 from flask import Flask, request, jsonify
 from flask.json.provider import DefaultJSONProvider
@@ -21,6 +23,7 @@ from handler import processar_mensagem
 from ai import analisar_comprovante, transcrever_audio, baixar_midia
 from db import get_or_create_usuario
 from services.categorias import get_categorias as get_categorias_usuario
+from services.despesas_fixas import lancar_despesas_fixas_do_mes
 from services.webhook_seguranca import validar_apikey, verificar_e_marcar_duplicata, passou_rate_limit
 from parser import parece_gasto_ou_comando
 from utils.app_error import AppError
@@ -119,6 +122,50 @@ if _PRODUCAO_SEM_SECRET:
         "EVOLUTION_WEBHOOK_SECRET não configurado em produção (RAILWAY_ENVIRONMENT "
         "presente) — /webhook vai recusar TODO tráfego até isso ser corrigido."
     )
+
+
+# ---------------------------------------------------------------------------
+# Lançador diário de despesas fixas — thread em processo, substituindo o
+# Cron Job separado do Railway que a decisão D4 original (PLANO_EXECUCAO.md)
+# pedia (pedido do Lucas em 16/07/2026: evitar um segundo serviço no Railway
+# só pra isso).
+#
+# D4 rejeitava scheduler in-process explicitamente por causa de múltiplos
+# workers gunicorn: com N workers, cada um é um processo próprio e cada um
+# sobe essa mesma thread — todos tentam lançar por volta do mesmo horário.
+# Sendo honesto sobre isso em vez de fingir que não existe: na prática isso
+# não duplica gasto nenhum, porque lancar_despesas_fixas_do_mes() já tem
+# duas camadas de proteção contra corrida (services/despesas_fixas.py) —
+# o índice único uq_despesa_fixa_mes (migração 004) e o
+# try/except UniqueViolation em volta do INSERT — pensadas originalmente pra
+# "2 execuções do cron sobrepostas", mas é exatamente a mesma categoria de
+# corrida que N workers tentando ao mesmo tempo. Só o primeiro grava; os
+# outros caem no except e seguem sem erro visível.
+#
+# Trade-off real que essa proteção NÃO cobre: se o processo web ficar fora
+# do ar o dia inteiro (deploy quebrado, downtime), nenhuma despesa fixa
+# lança naquele dia — não tem catch-up automático pra dias já passados. Pra
+# isso existe o botão "Confirmar" nas linhas "previsto" de Lançamentos
+# (routes/fixas.py: POST /api/fixas/:id/confirmar). Se downtime virar
+# problema recorrente, aí sim vale reconsiderar um Cron Job de verdade.
+# ---------------------------------------------------------------------------
+
+def _loop_lancar_fixas_diario():
+    while True:
+        agora = datetime.now()
+        proxima_execucao = agora.replace(hour=6, minute=0, second=0, microsecond=0)
+        if proxima_execucao <= agora:
+            proxima_execucao += timedelta(days=1)
+        time.sleep((proxima_execucao - agora).total_seconds())
+        try:
+            lancados = lancar_despesas_fixas_do_mes()
+            if lancados:
+                logger.info(f"Lançador diário: {len(lancados)} despesa(s) fixa(s) lançada(s).")
+        except Exception:
+            logger.exception("Lançador diário de despesas fixas falhou.")
+
+
+threading.Thread(target=_loop_lancar_fixas_diario, daemon=True).start()
 
 
 # ---------------------------------------------------------------------------

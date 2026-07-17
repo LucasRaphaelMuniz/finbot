@@ -9,6 +9,7 @@ from services.despesas_fixas import (
     criar_despesa_fixa,
     atualizar_despesa_fixa,
     desativar_despesa_fixa_por_id,
+    confirmar_lancamento_fixa,
 )
 
 bp = Blueprint("fixas", __name__, url_prefix="/api/fixas")
@@ -53,6 +54,26 @@ def atualizar(fixa_id):
     if not fixa:
         raise AppError("Despesa fixa não encontrada (ou nenhum campo pra atualizar).", 404, "nao_encontrado")
     return fixa
+
+
+@bp.route("/<int:fixa_id>/confirmar", methods=["POST"])
+@ensure_authenticated
+@requer_grupo
+def confirmar(fixa_id):
+    # Botão "Confirmar" nas linhas "previsto" de Lançamentos — ver docstring
+    # de confirmar_lancamento_fixa pro porquê disso existir (catch-up manual
+    # quando o cron não roda há um tempo).
+    dados = request.get_json(silent=True) or {}
+    competencia = dados.get("competencia")
+    if not competencia:
+        raise AppError("competencia (\"YYYY-MM\") é obrigatória.", 400, "campos_obrigatorios")
+    gasto = confirmar_lancamento_fixa(g.usuario_id, fixa_id, competencia)
+    if not gasto:
+        raise AppError(
+            "Não encontrada, já lançada nessa competência, ou não pertence ao seu grupo.",
+            404, "nao_encontrado",
+        )
+    return gasto, 201
 
 
 @bp.route("/<int:fixa_id>", methods=["DELETE"])
