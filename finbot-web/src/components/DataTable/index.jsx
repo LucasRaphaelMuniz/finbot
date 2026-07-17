@@ -8,7 +8,11 @@ import EmptyState from "@/components/EmptyState";
 import Loading from "@/components/Loading";
 import { TableWrap, Table, Th, Td, Tr, AcoesTd, AcoesFlex } from "./styles";
 
-export default function DataTable({ columns, rows, loading, vazio, acoes }) {
+// `linhaAtenuada(row)`: opcional, marca a linha inteira como "prevista/não
+// definitiva" (itálico + opacidade reduzida — ver styles.js) em vez de cada
+// tela ter que replicar esse estilo cell a cell. Usado hoje só por
+// Lançamentos (custo fixo projetado, ainda não lançado de verdade).
+export default function DataTable({ columns, rows, loading, vazio, acoes, linhaAtenuada }) {
   if (loading) return <Loading />;
   if (!rows || rows.length === 0) {
     return <EmptyState titulo={vazio?.titulo || "Nada por aqui ainda"} descricao={vazio?.descricao} acao={vazio?.acao} />;
@@ -27,7 +31,7 @@ export default function DataTable({ columns, rows, loading, vazio, acoes }) {
         </thead>
         <tbody>
           {rows.map((row) => (
-            <Tr key={row.id}>
+            <Tr key={row.id} $atenuada={linhaAtenuada ? linhaAtenuada(row) : false}>
               {columns.map((col) => (
                 <Td key={col.key}>{col.render ? col.render(row) : row[col.key]}</Td>
               ))}

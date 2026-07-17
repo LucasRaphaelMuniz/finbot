@@ -8,8 +8,9 @@ Tipos de mensagem tratados:
 """
 
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from flask import Flask, request, jsonify
+from flask.json.provider import DefaultJSONProvider
 from flask_cors import CORS
 from werkzeug.exceptions import HTTPException
 from dotenv import load_dotenv
@@ -30,7 +31,37 @@ from routes import register_routes
 
 logger = obter_logger("finbot.app")
 
+
+class _ISODateJSONProvider(DefaultJSONProvider):
+    """
+    Datas/horas em ISO 8601 (ex: "2026-07-06") nas respostas JSON da API.
+
+    O DefaultJSONProvider do Flask (nunca mudou nisso entre versões — não é
+    regressão) serializa `datetime.date`/`datetime.datetime` com
+    `http_date()`, formato RFC 2822 tipo "Mon, 06 Jul 2026 00:00:00 GMT".
+    Todo o resto do sistema sempre assumiu ISO: o frontend
+    (finbot-web/src/utils/format.js::formatarDataBR/formatarCompetencia faz
+    `.slice(0,10).split("-")`) e o parser web do bot. Esse descompasso
+    quebrava silenciosamente qualquer campo `data`/`competencia`/timestamp
+    que saísse cru de uma query (ex: routes/gastos.py devolve o dict do
+    banco direto, sem passar por serialização manual) — a coluna Data em
+    Lançamentos aparecia como "undefined/undefined/Mon, 06 Ju...".
+
+    Centralizado aqui (1 lugar) em vez de `.isoformat()` espalhado em cada
+    services/*.py que faz `dict(cur.fetchone())` — mesmo raciocínio do
+    AppError/errorhandler logo abaixo: um ponto único pra uma preocupação
+    que atravessa toda a API, não uma correção por endpoint (fácil esquecer
+    um e reintroduzir o mesmo bug depois).
+    """
+
+    def default(self, o):
+        if isinstance(o, date):
+            return o.isoformat()
+        return super().default(o)
+
+
 app = Flask(__name__)
+app.json = _ISODateJSONProvider(app)
 
 # CORS restrito ao domínio do finbot-web (Fase 4.3, §4.3 do PLANO_EXECUCAO.md).
 # Webhook do WhatsApp (/webhook) não precisa de CORS — só a API sob /api/*

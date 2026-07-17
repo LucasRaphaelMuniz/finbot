@@ -88,6 +88,7 @@ export default function LancamentosPage() {
       key: "parcela",
       label: "Origem",
       render: (r) =>
+        r.projetado ? "fixa (previsto)" :
         r.compra_parcelada_id ? `parcela ${r.parcela_num}/${r.total_parcelas || "?"}` :
         r.despesa_fixa_id ? "fixa" : "avulso",
     },
@@ -131,12 +132,21 @@ export default function LancamentosPage() {
           titulo: aba === "gastos" ? "Nenhum gasto neste mês" : "Nenhuma entrada registrada",
           descricao: "Use o botão \"Novo lançamento\" para adicionar.",
         }}
-        acoes={(row) => (
-          <>
-            <AcaoBtn onClick={() => setModalEditar(row)}>Editar</AcaoBtn>
-            <AcaoBtn $perigo onClick={() => setModalExcluir(row)}>Excluir</AcaoBtn>
-          </>
-        )}
+        linhaAtenuada={(row) => !!row.projetado}
+        acoes={(row) =>
+          // Linha projetada (custo fixo previsto, ainda sem gasto real —
+          // ver services/gastos.py::_projetar_despesas_fixas) não tem um
+          // /api/gastos/:id de verdade por trás pra editar/excluir; "id" é
+          // uma string sintética só pra servir de key no React.
+          row.projetado ? (
+            <span style={{ fontSize: 13, opacity: 0.6 }}>previsto</span>
+          ) : (
+            <>
+              <AcaoBtn onClick={() => setModalEditar(row)}>Editar</AcaoBtn>
+              <AcaoBtn $perigo onClick={() => setModalExcluir(row)}>Excluir</AcaoBtn>
+            </>
+          )
+        }
       />
 
       <ModalNovoLancamento

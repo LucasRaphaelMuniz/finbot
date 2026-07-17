@@ -33,6 +33,15 @@ export const Tr = styled.tr`
   &:hover {
     background: ${({ theme }) => theme.colors.surfaceAlt};
   }
+
+  // Linha "prevista, não definitiva" (custo fixo ainda não lançado de
+  // verdade pelo cron) — itálico + opacidade reduzida em vez de cor própria,
+  // pra continuar legível nos dois temas (dark/light) sem depender de mais
+  // uma cor no design system só pra isso.
+  ${({ $atenuada }) => $atenuada && `
+    font-style: italic;
+    opacity: 0.65;
+  `}
 `;
 
 // Antes tinha display:flex direto aqui — um <td> com display:flex deixa de
