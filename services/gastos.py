@@ -116,6 +116,12 @@ def projetar_despesas_fixas(conn, gid: int | None, usuario_id: int, mes: str) ->
     # fixa lançada que ficasse fora da página atual seria projetada em
     # duplicata. Também permite reusar esta função fora da listagem
     # (services/resumo.py, previsão do mês — pedido do Lucas em 18/07/2026).
+    #
+    # Fixas SUPRIMIDAS na competência (migração 026 — usuário excluiu o
+    # lançamento real/antecipado daquele mês) entram no mesmo conjunto de
+    # exclusão: sem isso, excluir o gasto antecipado de agosto faria a
+    # linha reaparecer aqui como "fixa (previsto)" — a exclusão viraria
+    # rebaixamento em vez de exclusão.
     with conn.cursor() as cur:
         cur.execute(
             """SELECT DISTINCT despesa_fixa_id FROM gastos
@@ -124,6 +130,11 @@ def projetar_despesas_fixas(conn, gid: int | None, usuario_id: int, mes: str) ->
             (competencia_alvo,),
         )
         ja_lancadas = {r["despesa_fixa_id"] for r in cur.fetchall()}
+        cur.execute(
+            "SELECT despesa_fixa_id FROM despesas_fixas_supressoes WHERE competencia = %s",
+            (competencia_alvo,),
+        )
+        ja_lancadas |= {r["despesa_fixa_id"] for r in cur.fetchall()}
 
     with conn.cursor() as cur:
         if gid:
@@ -331,6 +342,14 @@ def remover_gasto(usuario_id: int, gasto_id: int) -> dict | None:
     a compra inteira (services.parcelamento.excluir_compra_parcelada) — a
     mesma escolha "esta x inteira" da decisão D3 do bot, só que aqui como
     dois endpoints/parâmetros REST em vez de uma pergunta na conversa.
+
+    Gasto vindo de despesa fixa com competência do mês atual pra frente:
+    grava a SUPRESSÃO (migração 026) na mesma transação — sem isso o
+    lançador (catch-up diário + lançamento antecipado do mês seguinte)
+    recriaria a linha na rodada seguinte e a exclusão seria desfeita em
+    silêncio. Competência passada não grava (o lançador nunca revisita mês
+    fechado; deixar sem tombstone preserva o "reabre a vaga" das fixas com
+    prazo ao corrigir histórico).
     """
     with get_conn() as conn:
         gid = _get_grupo_id(conn, usuario_id)
@@ -347,5 +366,13 @@ def remover_gasto(usuario_id: int, gasto_id: int) -> dict | None:
                 return None
             gasto = dict(row)
             cur.execute("DELETE FROM gastos WHERE id = %s", (gasto_id,))
+            if gasto.get("despesa_fixa_id") and gasto.get("competencia") \
+                    and gasto["competencia"] >= date.today().replace(day=1):
+                cur.execute(
+                    """INSERT INTO despesas_fixas_supressoes (despesa_fixa_id, competencia)
+                       VALUES (%s, DATE_TRUNC('month', %s::date)::date)
+                       ON CONFLICT DO NOTHING""",
+                    (gasto["despesa_fixa_id"], gasto["competencia"]),
+                )
             conn.commit()
             return gasto

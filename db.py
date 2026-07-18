@@ -180,6 +180,13 @@ def registrar_gasto(usuario_id: int, forma_id: int, categoria_id: int,
             return dict(cur.fetchone())
 
 
+# "Último gasto" (este get, get_ultimos_gastos, excluir_ultimo_gasto e
+# editar_ultimo_gasto_valor) ordena por id DESC, não mais data DESC
+# (18/07/2026): com o lançamento antecipado de fixas (passe 2 do lançador),
+# existe gasto com DATA FUTURA no banco — por data, "apagar último" no
+# WhatsApp apagaria o custo fixo do mês que vem em vez do gasto que a pessoa
+# acabou de registrar. id serial = ordem de criação, que é o que "último"
+# sempre quis dizer nesses fluxos de correção do bot.
 def get_ultimo_gasto(usuario_id: int):
     """
     Peek (sem excluir) do último gasto — usado por 'excluir ultimo' para decidir
@@ -198,7 +205,7 @@ def get_ultimo_gasto(usuario_id: int):
                    LEFT JOIN formas_pagamento fp   ON fp.id = g.forma_pagamento_id
                    LEFT JOIN compras_parceladas cp ON cp.id = g.compra_parcelada_id
                    WHERE g.usuario_id = %s
-                   ORDER BY g.data DESC
+                   ORDER BY g.id DESC
                    LIMIT 1""",
                 (usuario_id,),
             )
@@ -206,12 +213,32 @@ def get_ultimo_gasto(usuario_id: int):
             return dict(row) if row else None
 
 
+def _suprimir_relancamento_se_fixa(cur, gasto: dict):
+    """
+    Gasto vindo de despesa fixa com competência do mês atual pra frente:
+    grava a supressão (migração 026) na mesma transação da exclusão — sem
+    isso o lançador (catch-up diário + lançamento antecipado do mês
+    seguinte) recriaria a linha na rodada seguinte e a exclusão feita pelo
+    bot seria desfeita em silêncio. Mesma regra do caminho web
+    (services/gastos.py::remover_gasto) — exclusão tem que valer igual não
+    importa por onde entrou.
+    """
+    if gasto.get("despesa_fixa_id") and gasto.get("competencia") \
+            and gasto["competencia"] >= date.today().replace(day=1):
+        cur.execute(
+            """INSERT INTO despesas_fixas_supressoes (despesa_fixa_id, competencia)
+               VALUES (%s, DATE_TRUNC('month', %s::date)::date)
+               ON CONFLICT DO NOTHING""",
+            (gasto["despesa_fixa_id"], gasto["competencia"]),
+        )
+
+
 def excluir_gasto_por_id(gasto_id: int):
     """Exclui um gasto específico pelo id — usado para excluir só 1 parcela (D3)."""
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """SELECT g.id, g.valor,
+                """SELECT g.id, g.valor, g.despesa_fixa_id, g.competencia,
                           c.nome  AS categoria_nome,
                           fp.nome AS forma_nome
                    FROM gastos g
@@ -225,6 +252,7 @@ def excluir_gasto_por_id(gasto_id: int):
                 return None
             gasto = dict(row)
             cur.execute("DELETE FROM gastos WHERE id = %s", (gasto_id,))
+            _suprimir_relancamento_se_fixa(cur, gasto)
             conn.commit()
             return gasto
 
@@ -240,7 +268,7 @@ def get_ultimos_gastos(usuario_id: int, limit: int = 5):
                    LEFT JOIN categorias c        ON c.id  = g.categoria_id
                    LEFT JOIN formas_pagamento fp ON fp.id = g.forma_pagamento_id
                    WHERE g.usuario_id = %s
-                   ORDER BY g.data DESC
+                   ORDER BY g.id DESC
                    LIMIT %s""",
                 (usuario_id, limit),
             )
@@ -251,14 +279,14 @@ def excluir_ultimo_gasto(usuario_id: int):
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """SELECT g.id, g.valor,
+                """SELECT g.id, g.valor, g.despesa_fixa_id, g.competencia,
                           c.nome  AS categoria_nome,
                           fp.nome AS forma_nome
                    FROM gastos g
                    LEFT JOIN categorias c        ON c.id  = g.categoria_id
                    LEFT JOIN formas_pagamento fp ON fp.id = g.forma_pagamento_id
                    WHERE g.usuario_id = %s
-                   ORDER BY g.data DESC
+                   ORDER BY g.id DESC
                    LIMIT 1""",
                 (usuario_id,),
             )
@@ -267,6 +295,7 @@ def excluir_ultimo_gasto(usuario_id: int):
                 return None
             gasto = dict(row)
             cur.execute("DELETE FROM gastos WHERE id = %s", (gasto["id"],))
+            _suprimir_relancamento_se_fixa(cur, gasto)
             conn.commit()
             return gasto
 
@@ -275,7 +304,7 @@ def editar_ultimo_gasto_valor(usuario_id: int, novo_valor: float) -> bool:
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id FROM gastos WHERE usuario_id = %s ORDER BY data DESC LIMIT 1",
+                "SELECT id FROM gastos WHERE usuario_id = %s ORDER BY id DESC LIMIT 1",
                 (usuario_id,),
             )
             row = cur.fetchone()

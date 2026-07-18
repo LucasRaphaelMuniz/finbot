@@ -33,7 +33,7 @@ from datetime import date
 
 import psycopg
 from db import get_conn, _get_grupo_id
-from services.competencia import calcular_competencia
+from services.competencia import calcular_competencia, somar_meses
 
 
 def get_despesas_fixas(usuario_id: int, apenas_ativas: bool = True) -> list[dict]:
@@ -135,11 +135,70 @@ def _valor_efetivo(fixa: dict, hoje: date) -> tuple[float, bool]:
     return (valor_pendente if usar_pendente else fixa["valor"]), usar_pendente
 
 
+def buscar_supressoes(conn, a_partir_de: date) -> set:
+    """
+    (despesa_fixa_id, competência-1º-do-mês) que o usuário excluiu de
+    propósito (migração 026, ver comentário lá). Usada pelo lançador (não
+    recriar o que foi excluído) e pela projeção em services/gastos.py (não
+    voltar a mostrar como "previsto" o que foi excluído).
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT despesa_fixa_id, competencia FROM despesas_fixas_supressoes "
+            "WHERE competencia >= %s",
+            (a_partir_de,),
+        )
+        return {(r["despesa_fixa_id"], r["competencia"]) for r in cur.fetchall()}
+
+
+def _inserir_lancamento(conn, fixa: dict, data_devida: date, competencia: date,
+                         valor: float) -> dict | None:
+    """
+    INSERT de um lançamento de fixa — usado pelos dois passes do lançador.
+    Retorna o gasto criado, ou None se a competência já tem lançamento (ou
+    outro worker gunicorn ganhou a corrida — uq_despesa_fixa_mes).
+
+    `data` explícita = dia devido (antes ficava no DEFAULT NOW()): pro
+    lançamento antecipado é obrigatório (a linha de agosto tem que exibir a
+    data de agosto, não o dia em que o cron rodou em julho) e pro catch-up
+    é mais honesto (fixa do dia 5 lançada dia 20 por atraso do processo
+    aparece datada do dia 5, coerente com a competência que já era
+    calculada a partir do dia devido).
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT 1 FROM gastos
+               WHERE despesa_fixa_id = %s
+                 AND DATE_TRUNC('month', competencia) = DATE_TRUNC('month', %s::date)""",
+            (fixa["id"], competencia),
+        )
+        if cur.fetchone():
+            return None
+        try:
+            cur.execute(
+                """INSERT INTO gastos
+                       (usuario_id, forma_pagamento_id, categoria_id, valor, descricao,
+                        grupo_id, competencia, despesa_fixa_id, data)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                   RETURNING *""",
+                (fixa["usuario_id"], fixa["forma_pagamento_id"], fixa["categoria_id"],
+                 valor, fixa["descricao"], fixa["grupo_id"], competencia, fixa["id"],
+                 data_devida),
+            )
+            gasto = dict(cur.fetchone())
+            conn.commit()
+            return gasto
+        except psycopg.errors.UniqueViolation:
+            conn.rollback()
+            return None
+
+
 def lancar_despesas_fixas_do_mes(hoje: date = None) -> list[dict]:
     """
-    Lança como gasto normal toda despesa fixa ativa cujo dia efetivo de
-    lançamento JÁ CHEGOU neste mês (hoje.day >= dia_efetivo) e que ainda
-    não foi lançada nessa competência.
+    Dois passes por despesa fixa ativa:
+
+    PASSE 1 — mês corrente: lança a fixa cujo dia efetivo JÁ CHEGOU
+    (hoje.day >= dia_efetivo) e ainda não tem lançamento na competência.
 
     CATCH-UP (18/07/2026, pedido do Lucas: "não quero confirmar custos
     fixos — se são fixos, serão fixos TODOS os meses"): antes a condição
@@ -148,17 +207,40 @@ def lancar_despesas_fixas_do_mes(hoje: date = None) -> list[dict]:
     botão Confirmar (que existia como muleta pra esse gap e foi removido
     junto com esta mudança). Com >=, qualquer execução posterior no mês
     lança o que ficou pra trás; a idempotência (checagem prévia + índice
-    único uq_despesa_fixa_mes) já impedia duplicar, então o catch-up sai de
-    graça. O lançador também roda na subida do processo (app.py), não só às
-    6h — deploy no meio do dia não atrasa lançamento.
+    único uq_despesa_fixa_mes) já impedia duplicar. O lançador também roda
+    na subida do processo (app.py), não só às 6h.
 
-    Fixa com prazo (parcelas_total, migração 025 — "financiamento da casa é
-    custo fixo mas acaba"): após lançar, se o total de gastos da fixa
-    atingiu parcelas_total, desativa sozinha (ativa = FALSE). A contagem sai
-    de `gastos` — parcela excluída manualmente reabre a vaga, o que é o
-    comportamento esperado (o que vale é o que foi lançado de fato).
+    PASSE 2 — LANÇAMENTO ANTECIPADO (18/07/2026, pedido do Lucas: "não
+    quero os lançamentos futuros como previsto — é certeza que vou pagar,
+    quero igual compra parcelada"): garante que a competência do MÊS
+    SEGUINTE já exista como gasto real, sem esperar o dia. A linha vira
+    normal na web (editável/excluível) em vez da sintética "fixa
+    (previsto)"; a projeção (services/gastos.py) segue cobrindo meses além
+    desse horizonte de 1 mês. A data de lançamento é escolhida pela MESMA
+    regra de candidatos da projeção: a data cuja calcular_competencia cai
+    na competência-alvo (fixa em cartão com dia_lancamento após o
+    fechamento tem data no mês anterior ao da competência).
+
+    Exclusão manual de um lançamento (deste mês ou do antecipado) NÃO é
+    recriada: services/gastos.py::remover_gasto grava a supressão
+    (migração 026) e os dois passes pulam a combinação fixa+competência.
+
+    Fixa com prazo (parcelas_total, migração 025): desativa sozinha ao
+    atingir o total. A contagem sai de `gastos` — parcela excluída SEM
+    supressão de mês (caso raro: exclusão de mês passado) reabre a vaga.
+    O passe 2 não antecipa a ÚLTIMA parcela se a competência corrente
+    ainda estiver pendente — senão a parcela final pularia um mês.
+
+    valor_pendente (reajuste "a partir do próximo mês", migração 017): o
+    passe 2 usa o valor pendente quando a data devida antecipada passa da
+    data protegida, mas NÃO promove (promover cedo demais contaminaria o
+    lançamento protegido do mês corrente); a promoção é do passe 1 e
+    acontece mesmo quando o gasto já existe (com o antecipado, o INSERT do
+    mês corrente quase sempre já aconteceu um mês antes — se a promoção
+    continuasse presa ao INSERT, o pendente nunca seria promovido).
     """
     hoje = hoje or date.today()
+    mes_corrente = hoje.replace(day=1)
     lancados = []
 
     with get_conn() as conn:
@@ -179,11 +261,9 @@ def lancar_despesas_fixas_do_mes(hoje: date = None) -> list[dict]:
             )
             fixas = [dict(r) for r in cur.fetchall()]
 
-        for fixa in fixas:
-            dia_efetivo = _dia_efetivo(fixa["dia_lancamento"], hoje.year, hoje.month)
-            if hoje.day < dia_efetivo:
-                continue  # ainda não chegou o dia neste mês
+        suprimidas = buscar_supressoes(conn, mes_corrente)
 
+        for fixa in fixas:
             # Prazo já cumprido (fixa parcelada tipo financiamento) — não
             # lança mais e garante a desativação (cinto e suspensório: o
             # normal é já ter sido desativada no lançamento da última).
@@ -193,51 +273,104 @@ def lancar_despesas_fixas_do_mes(hoje: date = None) -> list[dict]:
                     conn.commit()
                 continue
 
+            dia_efetivo = _dia_efetivo(fixa["dia_lancamento"], hoje.year, hoje.month)
             # Competência calculada a partir do DIA DEVIDO, não do dia em
             # que o catch-up rodou — lançar dia 20 uma fixa do dia 5 num
             # cartão que fecha dia 10 tem que cair na fatura que fecharia
             # pro dia 5, senão o atraso do processo mudaria a fatura.
             data_devida = date(hoje.year, hoje.month, dia_efetivo)
-            competencia = calcular_competencia(data_devida, fixa.get("dia_fechamento"))
-            valor_lancado, usar_pendente = _valor_efetivo(fixa, hoje)
+            competencia_corrente = calcular_competencia(data_devida, fixa.get("dia_fechamento"))
 
-            with conn.cursor() as cur:
-                cur.execute(
-                    """SELECT 1 FROM gastos
-                       WHERE despesa_fixa_id = %s
-                         AND DATE_TRUNC('month', competencia) = DATE_TRUNC('month', %s::date)""",
-                    (fixa["id"], competencia),
-                )
-                if cur.fetchone():
-                    continue  # já lançada essa competência
+            # ---- Passe 1: mês corrente (dia chegou) --------------------
+            if hoje.day >= dia_efetivo:
+                valor_lancado, usar_pendente = _valor_efetivo(fixa, hoje)
 
-                try:
-                    cur.execute(
-                        """INSERT INTO gastos
-                               (usuario_id, forma_pagamento_id, categoria_id, valor, descricao,
-                                grupo_id, competencia, despesa_fixa_id)
-                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                           RETURNING *""",
-                        (fixa["usuario_id"], fixa["forma_pagamento_id"], fixa["categoria_id"],
-                         valor_lancado, fixa["descricao"], fixa["grupo_id"], competencia, fixa["id"]),
+                gasto = None
+                if (fixa["id"], competencia_corrente) not in suprimidas:
+                    gasto = _inserir_lancamento(
+                        conn, fixa, data_devida, competencia_corrente, valor_lancado
                     )
-                    gasto = dict(cur.fetchone())
-                    if usar_pendente:
-                        cur.execute(
-                            "UPDATE despesas_fixas SET valor = %s, valor_pendente = NULL, "
-                            "valor_pendente_a_partir = NULL WHERE id = %s",
-                            (valor_lancado, fixa["id"]),
-                        )
-                    # Última parcela do prazo? Desativa na hora.
-                    if fixa.get("parcelas_total") and fixa["lancadas"] + 1 >= fixa["parcelas_total"]:
+
+                if usar_pendente or gasto:
+                    with conn.cursor() as cur:
+                        if usar_pendente:
+                            cur.execute(
+                                "UPDATE despesas_fixas SET valor = %s, valor_pendente = NULL, "
+                                "valor_pendente_a_partir = NULL WHERE id = %s",
+                                (valor_lancado, fixa["id"]),
+                            )
+                            fixa["valor"] = valor_lancado
+                            fixa["valor_pendente"] = None
+                            fixa["valor_pendente_a_partir"] = None
+                        if gasto:
+                            fixa["lancadas"] += 1
+                            lancados.append(gasto)
+                            if fixa.get("parcelas_total") and fixa["lancadas"] >= fixa["parcelas_total"]:
+                                cur.execute(
+                                    "UPDATE despesas_fixas SET ativa = FALSE WHERE id = %s",
+                                    (fixa["id"],),
+                                )
+                                fixa["ativa"] = False
+                        conn.commit()
+
+            # ---- Passe 2: competência do mês seguinte, antecipada ------
+            if not fixa["ativa"]:
+                continue
+            prox_competencia = somar_meses(mes_corrente, 1)
+
+            if fixa.get("parcelas_total"):
+                restantes = fixa["parcelas_total"] - fixa["lancadas"]
+                if restantes <= 0:
+                    continue
+                if restantes == 1 and competencia_corrente != prox_competencia:
+                    # Última parcela: se a competência corrente ainda não foi
+                    # lançada nem suprimida, o slot final é dela — antecipar
+                    # faria a última parcela pular um mês. (Quando a
+                    # competência do dia devido deste mês JÁ É a do mês
+                    # seguinte — cartão com lançamento após o fechamento —
+                    # antecipar é o mesmo slot, sem conflito.)
+                    if (fixa["id"], competencia_corrente) not in suprimidas:
+                        with conn.cursor() as cur:
+                            cur.execute(
+                                """SELECT 1 FROM gastos
+                                   WHERE despesa_fixa_id = %s
+                                     AND DATE_TRUNC('month', competencia) = DATE_TRUNC('month', %s::date)""",
+                                (fixa["id"], competencia_corrente),
+                            )
+                            if not cur.fetchone():
+                                continue
+
+            if (fixa["id"], prox_competencia) in suprimidas:
+                continue
+
+            # Mesma regra de candidatos da projeção: acha a data de
+            # lançamento cuja competência cai no mês-alvo.
+            data_antecipada = None
+            for ano_c, mes_c in ((prox_competencia.year, prox_competencia.month),
+                                 (hoje.year, hoje.month)):
+                dia_c = _dia_efetivo(fixa["dia_lancamento"], ano_c, mes_c)
+                candidata = date(ano_c, mes_c, dia_c)
+                if calcular_competencia(candidata, fixa.get("dia_fechamento")) == prox_competencia:
+                    data_antecipada = candidata
+                    break
+            if not data_antecipada:
+                continue
+
+            # Reajuste "próximo mês": usa o pendente se a data devida passa
+            # da protegida, mas quem promove é só o passe 1 (ver docstring).
+            valor_antecipado, _ = _valor_efetivo(fixa, data_antecipada)
+            gasto = _inserir_lancamento(
+                conn, fixa, data_antecipada, prox_competencia, valor_antecipado
+            )
+            if gasto:
+                fixa["lancadas"] += 1
+                lancados.append(gasto)
+                if fixa.get("parcelas_total") and fixa["lancadas"] >= fixa["parcelas_total"]:
+                    with conn.cursor() as cur:
                         cur.execute(
                             "UPDATE despesas_fixas SET ativa = FALSE WHERE id = %s", (fixa["id"],)
                         )
-                    conn.commit()
-                    lancados.append(gasto)
-                except psycopg.errors.UniqueViolation:
-                    conn.rollback()
-                    continue
+                        conn.commit()
 
     return lancados
 
@@ -268,7 +401,18 @@ def atualizar_despesa_fixa(usuario_id: int, fixa_id: int, descricao: str = None,
       sentido pedir isso quando o dia_lancamento deste mês ainda não
       passou — depois disso "imediato" e "proximo_mes" dão no mesmo
       resultado (o front não oferece a escolha nesse caso).
+
+    PROPAGAÇÃO (18/07/2026, junto com o lançamento antecipado): com o
+    passe 2 do lançador, o gasto do mês seguinte já existe de verdade
+    quando o reajuste chega — sem propagar, "a partir do próximo mês"
+    viraria "a partir do mês seguinte ao que já foi materializado". Então,
+    ao mudar `valor`, os lançamentos FUTUROS dessa fixa (data > hoje no
+    "imediato"; data > data protegida no "proximo_mes") são atualizados
+    junto. Efeito colateral assumido: se o usuário tinha editado à mão o
+    valor de um desses gastos futuros, o reajuste da fixa sobrescreve — o
+    cadastro da fixa é a fonte de verdade do que ainda não venceu.
     """
+    propagar_valor_apos = None  # data a partir da qual gastos futuros recebem o valor novo
     with get_conn() as conn:
         gid = _get_grupo_id(conn, usuario_id)
         sets, params = [], []
@@ -305,6 +449,7 @@ def atualizar_despesa_fixa(usuario_id: int, fixa_id: int, descricao: str = None,
                 params.append(valor)
                 sets.append("valor_pendente_a_partir = %s")
                 params.append(protegido_ate)
+                propagar_valor_apos = protegido_ate
             else:
                 sets.append("valor = %s")
                 params.append(valor)
@@ -313,6 +458,7 @@ def atualizar_despesa_fixa(usuario_id: int, fixa_id: int, descricao: str = None,
                 # disputando o mesmo lançamento futuro.
                 sets.append("valor_pendente = NULL")
                 sets.append("valor_pendente_a_partir = NULL")
+                propagar_valor_apos = date.today()
 
         if not sets:
             return None
@@ -331,6 +477,16 @@ def atualizar_despesa_fixa(usuario_id: int, fixa_id: int, descricao: str = None,
                     params + [fixa_id, usuario_id],
                 )
             row = cur.fetchone()
+            if row and propagar_valor_apos is not None:
+                # Ver "PROPAGAÇÃO" na docstring. O WHERE por data (> hoje /
+                # > protegida) em vez de competência é proposital: no
+                # "proximo_mes", o lançamento antecipado de fixa em cartão
+                # pode ter competência futura mas data DENTRO da janela
+                # protegida — esse tem que manter o valor antigo.
+                cur.execute(
+                    "UPDATE gastos SET valor = %s WHERE despesa_fixa_id = %s AND data > %s",
+                    (valor, fixa_id, propagar_valor_apos),
+                )
             conn.commit()
             return dict(row) if row else None
 

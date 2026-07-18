@@ -190,7 +190,16 @@ export default function LancamentosPage() {
         <ConfirmDialog
           aberto={!!modalExcluir}
           titulo="Confirmar exclusão"
-          mensagem="Tem certeza que deseja excluir este lançamento?"
+          mensagem={
+            // Lançamento de custo fixo (inclusive o antecipado do mês
+            // seguinte): a exclusão grava supressão no backend (migração
+            // 026) — não volta nem como real nem como "previsto" — mas a
+            // fixa segue lançando nos meses seguintes. Vale avisar, senão
+            // parece que excluiu o custo fixo inteiro.
+            modalExcluir?.despesa_fixa_id
+              ? "Este lançamento vem de um custo fixo. Excluir remove só este mês (não será relançado); o custo fixo continua ativo nos próximos meses."
+              : "Tem certeza que deseja excluir este lançamento?"
+          }
           onConfirmar={() => handleExcluir("unico")}
           onCancelar={() => setModalExcluir(null)}
         />
