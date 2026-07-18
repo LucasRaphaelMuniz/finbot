@@ -24,6 +24,7 @@ from ai import analisar_comprovante, transcrever_audio, baixar_midia
 from db import get_or_create_usuario
 from services.categorias import get_categorias as get_categorias_usuario
 from services.despesas_fixas import lancar_despesas_fixas_do_mes
+from services.entradas_fixas import lancar_entradas_fixas_do_mes
 from services.webhook_seguranca import validar_apikey, verificar_e_marcar_duplicata, passou_rate_limit
 from parser import parece_gasto_ou_comando
 from utils.app_error import AppError
@@ -163,6 +164,15 @@ def _loop_lancar_fixas_diario():
                 logger.info(f"Lançador diário: {len(lancados)} despesa(s) fixa(s) lançada(s).")
         except Exception:
             logger.exception("Lançador diário de despesas fixas falhou.")
+        # Entradas fixas (salário etc., migração 023) no mesmo ciclo — não é
+        # um segundo cron. try separado: falha num lançador não pode engolir
+        # o outro.
+        try:
+            entradas = lancar_entradas_fixas_do_mes()
+            if entradas:
+                logger.info(f"Lançador diário: {len(entradas)} entrada(s) fixa(s) lançada(s).")
+        except Exception:
+            logger.exception("Lançador diário de entradas fixas falhou.")
 
 
 threading.Thread(target=_loop_lancar_fixas_diario, daemon=True).start()

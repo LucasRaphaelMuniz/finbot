@@ -13,15 +13,19 @@ grupo, é pessoal.
 from db import get_conn, _get_grupo_id
 
 
-def registrar_entrada(usuario_id: int, valor: float, descricao: str = "") -> dict:
+def registrar_entrada(usuario_id: int, valor: float, descricao: str = "",
+                       entrada_fixa_id: int = None) -> dict:
+    """entrada_fixa_id (migração 023): vincula a entrada ao modelo
+    recorrente que a originou — o índice uq_entrada_fixa_mes usa isso pra
+    impedir 2 lançamentos da mesma fixa no mesmo mês."""
     with get_conn() as conn:
         gid = _get_grupo_id(conn, usuario_id)
         with conn.cursor() as cur:
             cur.execute(
-                """INSERT INTO entradas (usuario_id, grupo_id, descricao, valor)
-                   VALUES (%s, %s, %s, %s)
+                """INSERT INTO entradas (usuario_id, grupo_id, descricao, valor, entrada_fixa_id)
+                   VALUES (%s, %s, %s, %s, %s)
                    RETURNING *""",
-                (usuario_id, gid, descricao, valor),
+                (usuario_id, gid, descricao, valor, entrada_fixa_id),
             )
             conn.commit()
             return dict(cur.fetchone())

@@ -54,13 +54,18 @@ def listar_gastos(usuario_id: int, mes: str = None, categoria_id: int = None,
             total = cur.fetchone()["total"]
 
             offset = (page - 1) * per_page
+            # LEFT JOIN compras_parceladas pra devolver total_parcelas — o
+            # front mostra "parcela N/M"; sem esse join a web exibia
+            # "parcela 1/?" (bug real 18/07/2026). db.get_ultimos_gastos
+            # (bot) já fazia o mesmo join; a listagem web tinha ficado sem.
             cur.execute(
                 f"""SELECT g.*, c.nome AS categoria_nome, fp.nome AS forma_nome,
-                           u.nome AS membro_nome
+                           u.nome AS membro_nome, cp.parcelas AS total_parcelas
                     FROM gastos g
-                    LEFT JOIN categorias c        ON c.id  = g.categoria_id
-                    LEFT JOIN formas_pagamento fp ON fp.id = g.forma_pagamento_id
-                    LEFT JOIN usuarios u          ON u.id  = g.usuario_id
+                    LEFT JOIN categorias c          ON c.id  = g.categoria_id
+                    LEFT JOIN formas_pagamento fp   ON fp.id = g.forma_pagamento_id
+                    LEFT JOIN usuarios u            ON u.id  = g.usuario_id
+                    LEFT JOIN compras_parceladas cp ON cp.id = g.compra_parcelada_id
                     WHERE {where}
                     ORDER BY g.data DESC
                     LIMIT %s OFFSET %s""",
@@ -77,12 +82,12 @@ def listar_gastos(usuario_id: int, mes: str = None, categoria_id: int = None,
             # quando `mes` filtra um único mês específico — não faz sentido
             # numa listagem sem filtro de competência.
             if mes:
-                itens = itens + _projetar_despesas_fixas(conn, gid, usuario_id, mes, itens)
+                itens = itens + projetar_despesas_fixas(conn, gid, usuario_id, mes)
 
     return {"itens": itens, "total": total, "page": page, "per_page": per_page}
 
 
-def _projetar_despesas_fixas(conn, gid: int | None, usuario_id: int, mes: str, itens_reais: list[dict]) -> list[dict]:
+def projetar_despesas_fixas(conn, gid: int | None, usuario_id: int, mes: str) -> list[dict]:
     """
     Gera linhas "projetadas" (não persistidas em `gastos`) para despesas
     fixas ativas que, pela regra de competência (mesma `calcular_competencia`
@@ -106,7 +111,19 @@ def _projetar_despesas_fixas(conn, gid: int | None, usuario_id: int, mes: str, i
     if competencia_alvo < hoje.replace(day=1):
         return []
 
-    ja_lancadas = {i["despesa_fixa_id"] for i in itens_reais if i.get("despesa_fixa_id")}
+    # Quais fixas JÁ têm gasto real nessa competência — consulta direta em
+    # vez da lista paginada de itens (como era antes): com paginação, uma
+    # fixa lançada que ficasse fora da página atual seria projetada em
+    # duplicata. Também permite reusar esta função fora da listagem
+    # (services/resumo.py, previsão do mês — pedido do Lucas em 18/07/2026).
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT DISTINCT despesa_fixa_id FROM gastos
+               WHERE despesa_fixa_id IS NOT NULL
+                 AND DATE_TRUNC('month', competencia) = DATE_TRUNC('month', %s::date)""",
+            (competencia_alvo,),
+        )
+        ja_lancadas = {r["despesa_fixa_id"] for r in cur.fetchall()}
 
     with conn.cursor() as cur:
         if gid:

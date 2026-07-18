@@ -231,6 +231,8 @@ function ModalNovoLancamento({ aberto, onFechar, onSalvo, onErro }) {
   const [formaId, setFormaId] = useState(null);
   const [parcelado, setParcelado] = useState(false);
   const [parcelas, setParcelas] = useState(2);
+  const [recorrente, setRecorrente] = useState(false);
+  const [diaLancamento, setDiaLancamento] = useState(new Date().getDate());
   const [erro, setErro] = useState("");
   const [enviando, setEnviando] = useState(false);
 
@@ -242,6 +244,8 @@ function ModalNovoLancamento({ aberto, onFechar, onSalvo, onErro }) {
     setFormaId(null);
     setParcelado(false);
     setParcelas(2);
+    setRecorrente(false);
+    setDiaLancamento(new Date().getDate());
     setErro("");
   }
 
@@ -257,7 +261,12 @@ function ModalNovoLancamento({ aberto, onFechar, onSalvo, onErro }) {
     setEnviando(true);
     try {
       if (tipo === "entrada") {
-        await api.post("/entradas", { valor, descricao });
+        // `recorrente` cria também o modelo em entradas_fixas — o lançador
+        // diário repete a entrada nos próximos meses no dia informado.
+        await api.post("/entradas", {
+          valor, descricao,
+          ...(recorrente ? { recorrente: true, dia_lancamento: diaLancamento } : {}),
+        });
       } else {
         if (!categoriaId || !formaId) {
           setErro("Selecione categoria e forma de pagamento.");
@@ -302,6 +311,26 @@ function ModalNovoLancamento({ aberto, onFechar, onSalvo, onErro }) {
           <label htmlFor="descricao">Descrição</label>
           <input id="descricao" value={descricao} onChange={(e) => setDescricao(e.target.value)} />
         </Field>
+
+        {tipo === "entrada" && (
+          <>
+            <Field>
+              <label>
+                <input type="checkbox" checked={recorrente} onChange={(e) => setRecorrente(e.target.checked)} />
+                {" "}Recorrente/Fixo (cai todo mês — ex: salário)
+              </label>
+            </Field>
+            {recorrente && (
+              <Field>
+                <label htmlFor="dia-entrada">Dia do mês em que cai</label>
+                <input
+                  id="dia-entrada" type="number" min={1} max={31}
+                  value={diaLancamento} onChange={(e) => setDiaLancamento(Number(e.target.value))}
+                />
+              </Field>
+            )}
+          </>
+        )}
 
         {tipo === "gasto" && (
           <>

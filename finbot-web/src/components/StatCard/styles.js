@@ -23,3 +23,8 @@ export const Valor = styled.span`
     $tom === "sucesso" ? theme.colors.success :
     theme.colors.text};
 `;
+
+export const Detalhe = styled.span`
+  font-size: 12px;
+  color: ${({ theme }) => theme.colors.textMuted};
+`;

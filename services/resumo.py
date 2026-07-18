@@ -9,7 +9,9 @@ from datetime import date
 
 from db import get_conn, _get_grupo_id, get_saldo_todas_formas, get_formas_pagamento
 from services.entradas import get_total_entradas_competencia
+from services.entradas_fixas import total_entradas_fixas_previstas
 from services.faturas import status_cartao
+from services.gastos import projetar_despesas_fixas
 
 
 def resumo_mensal(usuario_id: int, mes: str = None) -> dict:
@@ -111,6 +113,23 @@ def resumo_mensal(usuario_id: int, mes: str = None) -> dict:
             )
             fatura_a_pagar = float(cur.fetchone()["total"])
 
+        # Fixas previstas (pedido do Lucas em 18/07/2026): navegando pra um
+        # mês corrente/futuro, os totais devem antecipar as despesas fixas
+        # que ainda não foram lançadas pelo cron naquele mês — mesma
+        # projeção que os Lançamentos já mostram como "fixa (previsto)"
+        # (services/gastos.projetar_despesas_fixas; retorna [] pra mês
+        # passado, então mês fechado nunca mistura previsto com real).
+        projetadas = projetar_despesas_fixas(conn, gid, usuario_id, competencia[:7])
+        fixas_previstas = sum(float(p["valor"]) for p in projetadas)
+
+        # Par das fixas previstas, do lado das receitas (migração 023):
+        # salário recorrente ainda não lançado no mês também entra na
+        # previsão — senão o mês seguinte mostraria só o lado dos gastos
+        # previstos e um saldo artificialmente negativo.
+        entradas_previstas = total_entradas_fixas_previstas(
+            conn, gid, usuario_id, date(*(int(p) for p in competencia.split("-")[:2]), 1)
+        )
+
     total_gastos = sum(c["total"] for c in por_categoria)
     total_entradas = get_total_entradas_competencia(usuario_id, competencia)
 
@@ -152,8 +171,21 @@ def resumo_mensal(usuario_id: int, mes: str = None) -> dict:
         # Controle: tudo que foi COMPRADO na competência (inclui cartão na
         # fatura do mês) — a visão pra saber "quanto estou gastando".
         "total_gastos": total_gastos,
+        # Fixas ativas que ainda não foram lançadas nessa competência (0 pra
+        # mês passado). total_gastos_previsto = real + previsto — é o número
+        # a olhar ao navegar pro mês seguinte.
+        "fixas_previstas": fixas_previstas,
+        "total_gastos_previsto": total_gastos + fixas_previstas,
         "total_entradas": total_entradas,
+        # Entradas recorrentes (salário) ainda não lançadas no mês — par das
+        # fixas_previstas do lado das receitas (0 pra mês passado).
+        "entradas_previstas": entradas_previstas,
+        "total_entradas_previsto": total_entradas + entradas_previstas,
         "saldo": total_entradas - total_gastos,
+        # Saldo projetado do mês considerando os dois lados previstos — o
+        # número a olhar ao navegar pro mês seguinte.
+        "saldo_previsto": (total_entradas + entradas_previstas)
+                          - (total_gastos + fixas_previstas),
         # Caixa: o que efetivamente SAI DO BOLSO no mês — gastos à vista +
         # faturas de cartão que vencem nele. É aqui que o cartão aparece
         # "provisionado" pro mês seguinte, sem tirar as compras da visão de

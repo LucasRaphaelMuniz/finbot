@@ -36,13 +36,52 @@ export default function DashboardPage() {
       ) : (
         <>
           <StatsRow>
-            <StatCard label="Entradas do mês" valor={brl(dados.total_entradas)} tom="sucesso" />
-            <StatCard label="Gastos do mês" valor={brl(dados.total_gastos)} tom="erro" />
+            {/* Mesmo padrão dos gastos: mês corrente/futuro antecipa
+                entradas recorrentes (salário) ainda não lançadas. */}
+            {dados.entradas_previstas > 0 ? (
+              <StatCard
+                label="Entradas do mês (com previstas)"
+                valor={brl(dados.total_entradas_previsto)}
+                detalhe={`${brl(dados.total_entradas)} reais + ${brl(dados.entradas_previstas)} recorrentes previstas`}
+                tom="sucesso"
+              />
+            ) : (
+              <StatCard label="Entradas do mês" valor={brl(dados.total_entradas)} tom="sucesso" />
+            )}
+            {/* Gastos previstos = reais + fixas ainda não lançadas no mês
+                (fixas_previstas > 0 só em mês corrente/futuro). Mês fechado
+                mostra só o real, sem card extra. */}
+            {dados.fixas_previstas > 0 ? (
+              <StatCard
+                label="Gastos do mês (com previstos)"
+                valor={brl(dados.total_gastos_previsto)}
+                detalhe={`${brl(dados.total_gastos)} reais + ${brl(dados.fixas_previstas)} fixas previstas`}
+                tom="erro"
+              />
+            ) : (
+              <StatCard label="Gastos do mês" valor={brl(dados.total_gastos)} tom="erro" />
+            )}
             <StatCard
               label="Saldo do mês"
               valor={brl(dados.saldo)}
+              detalhe={
+                dados.fixas_previstas > 0 || dados.entradas_previstas > 0
+                  ? `projetado com previstos: ${brl(dados.saldo_previsto)}`
+                  : undefined
+              }
               tom={dados.saldo >= 0 ? "sucesso" : "erro"}
             />
+            {/* Caixa: o que sai do bolso no mês (à vista + fatura vencendo).
+                Só aparece quando há fatura a pagar — sem cartão, caixa e
+                gastos são a mesma coisa e o card seria redundante. */}
+            {dados.caixa?.fatura_a_pagar > 0 && (
+              <StatCard
+                label="Saída de caixa do mês"
+                valor={brl(dados.caixa.saida_total)}
+                detalhe={`${brl(dados.caixa.fatura_a_pagar)} de fatura(s) vencendo`}
+                tom="erro"
+              />
+            )}
             <StatCard
               label="% médio dos limites usados"
               valor={dados.pct_limite_medio != null ? `${dados.pct_limite_medio.toFixed(0)}%` : "—"}

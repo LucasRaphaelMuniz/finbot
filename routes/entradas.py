@@ -1,5 +1,7 @@
 """routes/entradas.py — GET/POST /api/entradas, PUT/DELETE /api/entradas/:id (Fase 4.3)."""
 
+from datetime import date
+
 from flask import Blueprint, request, g
 
 from middlewares.ensure_authenticated import ensure_authenticated, requer_grupo
@@ -10,6 +12,7 @@ from services.entradas import (
     atualizar_entrada,
     remover_entrada,
 )
+from services.entradas_fixas import criar_entrada_fixa
 
 bp = Blueprint("entradas", __name__, url_prefix="/api/entradas")
 
@@ -33,6 +36,25 @@ def criar():
     dados = request.get_json(silent=True) or {}
     if dados.get("valor") is None:
         raise AppError("valor é obrigatório.", 400, "campos_obrigatorios")
+
+    # `recorrente: true` (migração 023): além de registrar a entrada de
+    # agora, cria o modelo em entradas_fixas — o lançador diário repete nos
+    # próximos meses no dia informado (default: dia de hoje). A entrada de
+    # hoje já nasce vinculada ao modelo (entrada_fixa_id) pra o índice
+    # único não deixar o lançador duplicar ainda este mês.
+    if dados.get("recorrente"):
+        dia = int(dados.get("dia_lancamento") or date.today().day)
+        if not 1 <= dia <= 31:
+            raise AppError("dia_lancamento deve estar entre 1 e 31.", 400, "dia_invalido")
+        fixa = criar_entrada_fixa(
+            g.usuario_id, dados.get("descricao", ""), float(dados["valor"]), dia,
+        )
+        entrada = registrar_entrada(
+            g.usuario_id, float(dados["valor"]), dados.get("descricao", ""),
+            entrada_fixa_id=fixa["id"],
+        )
+        return {**entrada, "entrada_fixa": fixa}, 201
+
     entrada = registrar_entrada(g.usuario_id, float(dados["valor"]), dados.get("descricao", ""))
     return entrada, 201
 
