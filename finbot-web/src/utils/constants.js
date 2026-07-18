@@ -3,6 +3,14 @@
 // arquivo de rota app/(auth)/.../page.jsx, que o Next trata de forma especial).
 export const CONVITE_PENDENTE_KEY = "finbot_convite_pendente";
 
+// WhatsApp opcional informado no formulário de cadastro (page.jsx) —
+// atravessa o hiato de confirmação de e-mail via localStorage, mesmo
+// padrão de CONVITE_PENDENTE_KEY, porque o clique no link de confirmação
+// recarrega a página do zero (perde qualquer state em memória). Só
+// pré-preenche o passo de telefone em CompletarCadastro — o OTP continua
+// obrigatório (F2 da auditoria: nenhum telefone é aceito sem verificação).
+export const WHATSAPP_PENDENTE_KEY = "finbot_whatsapp_pendente";
+
 // Fase C do AUDITORIA_E_PLANO_CADASTRO.md: guarda se o cadastro que acabou
 // de terminar veio de um merge com conta já existente do bot, ou foi criado
 // do zero — usado só pra escolher qual variante do TourPrimeiroLogin

@@ -7,8 +7,9 @@ concentrada, em vez de espalhar SUM/GROUP BY em múltiplas chamadas do front.
 
 from datetime import date
 
-from db import get_conn, _get_grupo_id, get_saldo_todas_formas
+from db import get_conn, _get_grupo_id, get_saldo_todas_formas, get_formas_pagamento
 from services.entradas import get_total_entradas_competencia
+from services.faturas import status_cartao
 
 
 def resumo_mensal(usuario_id: int, mes: str = None) -> dict:
@@ -74,23 +75,37 @@ def resumo_mensal(usuario_id: int, mes: str = None) -> dict:
     total_gastos = sum(c["total"] for c in por_categoria)
     total_entradas = get_total_entradas_competencia(usuario_id, competencia)
 
-    # % médio dos limites usados (StatCard do §5.2) — reaproveita
-    # db.get_saldo_todas_formas (mesma query que o bot usa em "saldo"), só
-    # pras formas COM limite_mensal configurado; forma sem limite não entra
-    # na média (não faz sentido dizer "0% de limite" pra algo sem limite).
+    # % médio dos limites usados (StatCard do §5.2), só pras formas COM
+    # limite_mensal configurado; forma sem limite não entra na média (não
+    # faz sentido dizer "0% de limite" pra algo sem limite).
     #
-    # LIMITAÇÃO CONHECIDA: get_saldo_todas_formas sempre calcula pro mês
-    # ATUAL (usa NOW() na query, mesma função que o bot usa em "saldo") —
-    # não respeita o parâmetro `mes` desta função. Pedir o resumo de um mês
+    # Formas tipo cartão (dia_fechamento configurado) usam limite ROTATIVO
+    # real (services/faturas.py, migração 021) em vez do "gasto do mês" —
+    # desde 019/020 a competência de cartão é o mês do vencimento, então
+    # gasto_mes de get_saldo_todas_formas já não representa mais "quanto do
+    # limite está comprometido" (ignora fatura fechada a pagar e parcelas
+    # futuras). Formas sem dia_fechamento (pix/débito/Custo Fixo) continuam
+    # na conta simples de sempre.
+    #
+    # LIMITAÇÃO CONHECIDA (herdada, ainda não resolvida): tanto
+    # get_saldo_todas_formas quanto status_cartao calculam pro mês ATUAL —
+    # não respeitam o parâmetro `mes` desta função. Pedir o resumo de um mês
     # passado mostra o % de limite de HOJE, não daquele mês. Corrigir exigiria
-    # parametrizar get_saldo_todas_formas com a competência (mexendo em
-    # db.py, usado pelo bot) — fora do escopo desta Fase 5.2; documentado
-    # aqui em vez de silenciado.
-    formas = get_saldo_todas_formas(usuario_id)
-    percentuais = [
-        (float(f["gasto_mes"]) / float(f["limite_mensal"])) * 100
-        for f in formas if f.get("limite_mensal")
-    ]
+    # parametrizar as duas com a competência — fora do escopo desta Fase.
+    todas_formas = get_formas_pagamento(usuario_id)
+    formas_saldo = {f["id"]: f for f in get_saldo_todas_formas(usuario_id)}
+    percentuais = []
+    for f in todas_formas:
+        if not f.get("limite_mensal"):
+            continue
+        limite = float(f["limite_mensal"])
+        if f.get("dia_fechamento"):
+            status = status_cartao(usuario_id, f["id"])
+            usado = status["limite_usado"] if status else 0.0
+        else:
+            saldo = formas_saldo.get(f["id"])
+            usado = float(saldo["gasto_mes"]) if saldo else 0.0
+        percentuais.append((usado / limite) * 100)
     pct_limite_medio = sum(percentuais) / len(percentuais) if percentuais else None
 
     return {

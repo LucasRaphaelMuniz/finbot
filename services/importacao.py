@@ -227,10 +227,12 @@ def confirmar_importacao(usuario_id: int, forma_pagamento_id: int, arquivo_nome:
         gid = _get_grupo_id(conn, usuario_id)
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT dia_fechamento FROM formas_pagamento WHERE id = %s", (forma_pagamento_id,)
+                "SELECT dia_fechamento, dia_vencimento FROM formas_pagamento WHERE id = %s",
+                (forma_pagamento_id,),
             )
             forma_row = cur.fetchone()
             dia_fechamento = forma_row["dia_fechamento"] if forma_row else None
+            dia_vencimento = forma_row["dia_vencimento"] if forma_row else None
 
             cur.execute(
                 """INSERT INTO importacoes
@@ -246,7 +248,7 @@ def confirmar_importacao(usuario_id: int, forma_pagamento_id: int, arquivo_nome:
                 # (services/competencia.py) — compra perto do fechamento cai
                 # no mês seguinte, não importa se entrou pelo bot, pela web ou
                 # por importação de fatura.
-                competencia = calcular_competencia(data_transacao, dia_fechamento)
+                competencia = calcular_competencia(data_transacao, dia_fechamento, dia_vencimento)
                 cur.execute(
                     """INSERT INTO gastos
                            (usuario_id, forma_pagamento_id, categoria_id, valor, descricao,

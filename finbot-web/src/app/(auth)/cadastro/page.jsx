@@ -15,13 +15,15 @@ import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import AuthCard from "@/components/AuthCard";
 import { Field, Botao, Mensagem, LinkSecundario } from "@/components/AuthCard/styles";
-import { CONVITE_PENDENTE_KEY } from "@/utils/constants";
+import TelefoneInput from "@/components/TelefoneInput";
+import { CONVITE_PENDENTE_KEY, WHATSAPP_PENDENTE_KEY } from "@/utils/constants";
 
 export default function CadastroPage() {
   const searchParams = useSearchParams();
   const [nome, setNome] = useState("");
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
+  const [whatsapp, setWhatsapp] = useState("");
   const [codigoConvite, setCodigoConvite] = useState(searchParams.get("convite") || "");
   const [erro, setErro] = useState("");
   const [mensagem, setMensagem] = useState("");
@@ -47,6 +49,12 @@ export default function CadastroPage() {
 
     if (codigoConvite.trim()) {
       localStorage.setItem(CONVITE_PENDENTE_KEY, codigoConvite.trim());
+    }
+    // Só guarda o dígitos crus — o OTP em CompletarCadastro é quem valida
+    // de verdade (ver comentário em utils/constants.js). Isso é só
+    // pré-preenchimento pra pessoa não digitar o número 2x.
+    if (whatsapp.trim()) {
+      localStorage.setItem(WHATSAPP_PENDENTE_KEY, whatsapp.trim());
     }
 
     if (!data.session) {
@@ -83,6 +91,14 @@ export default function CadastroPage() {
             value={senha}
             onChange={(e) => setSenha(e.target.value)}
           />
+        </Field>
+        <Field>
+          <label htmlFor="whatsapp">Seu WhatsApp (opcional)</label>
+          <TelefoneInput id="whatsapp" value={whatsapp} onChange={setWhatsapp} />
+          <small style={{ fontSize: 12, opacity: 0.7 }}>
+            Informe agora pra pular esse passo depois — de qualquer forma,
+            vamos confirmar por código enviado pelo WhatsApp.
+          </small>
         </Field>
         <Field>
           <label htmlFor="convite">Código de convite (opcional)</label>

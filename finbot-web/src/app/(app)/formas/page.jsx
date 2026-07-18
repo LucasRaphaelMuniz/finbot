@@ -50,6 +50,7 @@ export default function FormasPage() {
           { key: "nome", label: "Nome" },
           { key: "limite_mensal", label: "Limite mensal", render: (f) => f.limite_mensal ? brl(f.limite_mensal) : "Sem limite" },
           { key: "dia_fechamento", label: "Dia de fechamento", render: (f) => f.dia_fechamento || "—" },
+          { key: "dia_vencimento", label: "Dia de vencimento", render: (f) => f.dia_vencimento || "—" },
         ]}
         rows={dados?.itens}
         loading={loading}
@@ -94,6 +95,7 @@ function FormForma({ forma, onSalvo, onErro }) {
   const [limite, setLimite] = useState(forma?.limite_mensal || 0);
   const [semLimite, setSemLimite] = useState(!forma?.limite_mensal);
   const [diaFechamento, setDiaFechamento] = useState(forma?.dia_fechamento || "");
+  const [diaVencimento, setDiaVencimento] = useState(forma?.dia_vencimento || "");
   const [erro, setErro] = useState("");
   const [enviando, setEnviando] = useState(false);
 
@@ -109,6 +111,7 @@ function FormForma({ forma, onSalvo, onErro }) {
       nome,
       limite_mensal: semLimite ? null : limite,
       dia_fechamento: diaFechamento ? Number(diaFechamento) : null,
+      dia_vencimento: diaVencimento ? Number(diaVencimento) : null,
     };
     try {
       if (forma) {
@@ -150,9 +153,24 @@ function FormForma({ forma, onSalvo, onErro }) {
           placeholder="ex: 25"
         />
         <small style={{ opacity: 0.7 }}>
-          Gastos depois desse dia entram na competência do mês seguinte.
+          Data em que a fatura fecha — determina em qual fatura a compra cai.
         </small>
       </Field>
+      {diaFechamento && (
+        <Field>
+          <label htmlFor="vencimento-forma">Dia de vencimento da fatura</label>
+          <input
+            id="vencimento-forma" type="number" min={1} max={31}
+            value={diaVencimento} onChange={(e) => setDiaVencimento(e.target.value)}
+            placeholder="ex: 5"
+          />
+          <small style={{ opacity: 0.7 }}>
+            Data em que a fatura é paga — o gasto conta no orçamento desse
+            mês, não no mês em que a fatura fechou. Sem preencher, assume o
+            mês seguinte ao fechamento (caso mais comum).
+          </small>
+        </Field>
+      )}
       {erro && <div style={{ color: "#f2545b", fontSize: 13 }}>{erro}</div>}
       <SalvarBtn type="submit" disabled={enviando}>{enviando ? "Salvando..." : "Salvar"}</SalvarBtn>
     </form>

@@ -92,11 +92,12 @@ def _projetar_despesas_fixas(conn, gid: int | None, usuario_id: int, mes: str, i
     Só projeta mês atual pra frente (não polui mês passado com "buracos" do
     cron — isso seria sinal de outro problema, não de projeção legítima).
 
-    Cada fixa é testada contra DOIS candidatos de data de lançamento (mês
-    alvo e mês anterior a ele) porque `calcular_competencia` pode empurrar
-    a competência pro mês seguinte quando o dia de lançamento é depois do
-    dia_fechamento do cartão — a data real de lançamento pode cair no mês
-    anterior ao da competência resultante.
+    Cada fixa é testada contra TRÊS candidatos de data de lançamento (mês
+    alvo e os dois meses anteriores a ele) porque `calcular_competencia`
+    (migração 019/020) pode empurrar a competência em até 2 meses à frente
+    da data real de lançamento: 1 mês se ela cair depois do dia_fechamento
+    do cartão, mais 1 mês pro mês de vencimento da fatura — a data real de
+    lançamento pode cair até 2 meses antes da competência resultante.
     """
     ano, mes_num = (int(p) for p in mes.split("-"))
     competencia_alvo = date(ano, mes_num, 1)
@@ -111,7 +112,7 @@ def _projetar_despesas_fixas(conn, gid: int | None, usuario_id: int, mes: str, i
         if gid:
             cur.execute(
                 """SELECT df.*, c.nome AS categoria_nome, fp.nome AS forma_nome,
-                          fp.dia_fechamento, u.nome AS membro_nome
+                          fp.dia_fechamento, fp.dia_vencimento, u.nome AS membro_nome
                    FROM despesas_fixas df
                    LEFT JOIN categorias c        ON c.id  = df.categoria_id
                    LEFT JOIN formas_pagamento fp ON fp.id = df.forma_pagamento_id
@@ -122,7 +123,7 @@ def _projetar_despesas_fixas(conn, gid: int | None, usuario_id: int, mes: str, i
         else:
             cur.execute(
                 """SELECT df.*, c.nome AS categoria_nome, fp.nome AS forma_nome,
-                          fp.dia_fechamento, u.nome AS membro_nome
+                          fp.dia_fechamento, fp.dia_vencimento, u.nome AS membro_nome
                    FROM despesas_fixas df
                    LEFT JOIN categorias c        ON c.id  = df.categoria_id
                    LEFT JOIN formas_pagamento fp ON fp.id = df.forma_pagamento_id
@@ -141,13 +142,15 @@ def _projetar_despesas_fixas(conn, gid: int | None, usuario_id: int, mes: str, i
             continue  # já lançada de verdade nesse mês — não duplica
 
         candidatos = [(ano, mes_num)]
-        candidatos.append(_mes_anterior(ano, mes_num))
+        mes_1_atras = _mes_anterior(ano, mes_num)
+        candidatos.append(mes_1_atras)
+        candidatos.append(_mes_anterior(*mes_1_atras))
 
         data_projetada = None
         for ano_c, mes_c in candidatos:
             dia_c = _dia_efetivo(fixa["dia_lancamento"], ano_c, mes_c)
             candidata = date(ano_c, mes_c, dia_c)
-            if calcular_competencia(candidata, fixa.get("dia_fechamento")) == competencia_alvo:
+            if calcular_competencia(candidata, fixa.get("dia_fechamento"), fixa.get("dia_vencimento")) == competencia_alvo:
                 data_projetada = candidata
                 break
 
@@ -174,7 +177,8 @@ def _projetar_despesas_fixas(conn, gid: int | None, usuario_id: int, mes: str, i
 
 
 def criar_gasto(usuario_id: int, forma_pagamento_id: int, categoria_id: int,
-                 valor: float, descricao: str = "", dia_fechamento: int = None) -> dict:
+                 valor: float, descricao: str = "", dia_fechamento: int = None,
+                 dia_vencimento: int = None) -> dict:
     # Fase D3 do AUDITORIA_E_PLANO_CADASTRO.md — recusa categoria que não é
     # global nem do próprio grupo, antes de gravar (ver services/categorias.py).
     if not categoria_pertence_ao_usuario(usuario_id, categoria_id):
@@ -184,7 +188,7 @@ def criar_gasto(usuario_id: int, forma_pagamento_id: int, categoria_id: int,
         gid = _get_grupo_id(conn, usuario_id)
     return registrar_gasto(
         usuario_id, forma_pagamento_id, categoria_id, valor, descricao,
-        grupo_id=gid, dia_fechamento=dia_fechamento,
+        grupo_id=gid, dia_fechamento=dia_fechamento, dia_vencimento=dia_vencimento,
     )
 
 

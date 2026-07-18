@@ -11,22 +11,23 @@ from db import get_conn, _get_grupo_id
 
 
 def criar_forma(usuario_id: int, nome: str, limite_mensal: float = None,
-                 dia_fechamento: int = None) -> dict:
+                 dia_fechamento: int = None, dia_vencimento: int = None) -> dict:
     with get_conn() as conn:
         gid = _get_grupo_id(conn, usuario_id)
         with conn.cursor() as cur:
             cur.execute(
                 """INSERT INTO formas_pagamento
-                       (usuario_id, grupo_id, nome, limite_mensal, dia_fechamento)
-                   VALUES (%s, %s, %s, %s, %s) RETURNING *""",
-                (usuario_id, gid, nome, limite_mensal, dia_fechamento),
+                       (usuario_id, grupo_id, nome, limite_mensal, dia_fechamento, dia_vencimento)
+                   VALUES (%s, %s, %s, %s, %s, %s) RETURNING *""",
+                (usuario_id, gid, nome, limite_mensal, dia_fechamento, dia_vencimento),
             )
             conn.commit()
             return dict(cur.fetchone())
 
 
 def atualizar_forma(usuario_id: int, forma_id: int, nome: str = None,
-                     limite_mensal: float = None, dia_fechamento: int = None) -> dict | None:
+                     limite_mensal: float = None, dia_fechamento: int = None,
+                     dia_vencimento: int = None) -> dict | None:
     with get_conn() as conn:
         gid = _get_grupo_id(conn, usuario_id)
         sets, params = [], []
@@ -39,6 +40,9 @@ def atualizar_forma(usuario_id: int, forma_id: int, nome: str = None,
         if dia_fechamento is not None:
             sets.append("dia_fechamento = %s")
             params.append(dia_fechamento)
+        if dia_vencimento is not None:
+            sets.append("dia_vencimento = %s")
+            params.append(dia_vencimento)
         if not sets:
             return None
 

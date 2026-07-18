@@ -1,5 +1,14 @@
 import re
+import unicodedata
 from difflib import SequenceMatcher
+
+
+def _sem_acento(texto: str) -> str:
+    """Remove acentos (NFD + descarta combining marks) pra comparação
+    tolerante a como a pessoa digita ('credito' vs 'crédito', 'CRÉDITO' vs
+    'credito'). Usado só em comparação — nunca altera o que é gravado."""
+    nfkd = unicodedata.normalize("NFD", texto)
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
 
 # ---------------------------------------------------------------------------
 # Entrada/receita (Fase 3.5) — checado antes do fluxo de gasto no input livre
@@ -248,8 +257,15 @@ def extrair_categoria(texto: str, categorias: list, threshold: float = 0.70):
 # ---------------------------------------------------------------------------
 
 _FORMA_ALIASES: list[tuple[str, list[str]]] = [
+    # "debito"/"débito" fica fora deste grupo de propósito: quando existe
+    # uma forma separada tipo "DÉBITO/PIX", o próprio nome dela já cobre a
+    # palavra "debito" no primeiro check (match direto por token do nome).
+    # Deixar "debito" aqui faria "cart" (ex.: forma "CRÉDITO", que também
+    # entra neste grupo pelo alargamento de gatilho) roubar esse match —
+    # crédito e débito são conceitos opostos, não deveriam compartilhar
+    # grupo de alias.
     ("cart", ["cartao", "cartão", "card", "credito", "crédito",
-              "debito", "débito", "visa", "master", "elo"]),
+              "visa", "master", "elo"]),
     ("pix",  ["pix", "dinheiro", "especie", "espécie", "cash",
               "transferencia", "transferência"]),
     ("ticket", ["ticket", "vale", "vr", "va", "refeicao", "refeição",
@@ -258,22 +274,51 @@ _FORMA_ALIASES: list[tuple[str, list[str]]] = [
 
 
 def extrair_forma_pagamento(texto: str, formas: list):
-    """Retorna dict da forma detectada ou None."""
-    texto_lower = texto.lower()
+    """
+    Retorna dict da forma detectada ou None.
+
+    Duas correções (bug real 17/07/2026, "VA atualizacao 264" caiu no menu
+    mesmo com "VA" no texto — não era esse caso específico, mas o teste
+    revelou dois problemas vizinhos no mesmo mecanismo de match):
+
+    1. Comparação por TOKEN (fronteira de palavra), não substring — "VA"
+       não pode casar dentro de "vaquinha". Antes: `"va" in "vaquinha 30"`
+       era True (substring). Agora: "va" precisa ser um token inteiro do
+       texto tokenizado.
+    2. Comparação sem acento nos dois lados — "credito" (usuário digita
+       sem acento) não batia com o nome "CRÉDITO" cadastrado (com acento),
+       porque só a versão SEM normalizar era comparada.
+    """
+    texto_normalizado = _sem_acento(texto.lower())
+    tokens_texto = set(re.split(r"\W+", texto_normalizado)) - {""}
 
     for forma in formas:
-        nome_lower = forma["nome"].lower()
+        nome_normalizado = _sem_acento(forma["nome"].lower())
 
-        # Palavras do nome (ex: "Pix", "VA", "VR") no texto — mínimo 2 chars
-        palavras_nome = [w for w in re.split(r"\W+", nome_lower) if len(w) >= 2]
-        if any(w in texto_lower for w in palavras_nome):
+        # Palavras do nome (ex: "pix", "va", "vr", "credito") como token
+        # inteiro no texto — mínimo 2 chars pra não casar token de 1 letra
+        # à toa.
+        palavras_nome = [w for w in re.split(r"\W+", nome_normalizado) if len(w) >= 2]
+        if any(w in tokens_texto for w in palavras_nome):
             return forma
 
-        # Aliases por tipo
+        # Aliases por tipo (ex: forma "CRÉDITO" com o usuário digitando
+        # "cartao" ou "visa"). Gatilho do grupo: nome da forma contém o
+        # fragmento (ex: "cartão de crédito" contém "cart") OU o próprio
+        # nome da forma é um dos aliases do grupo (ex: forma cadastrada só
+        # como "CRÉDITO", sem a palavra "cartão" — "credito" é alias do
+        # grupo "cart"). Restrito ao grupo "ticket" NÃO usar essa segunda
+        # regra: "va"/"vr" são ao mesmo tempo nomes de forma comuns E
+        # aliases um do outro dentro do próprio grupo ("vr" é alias de
+        # "ticket", que também é o grupo de "va") — alargar o gatilho ali
+        # fazia "vr almoço" casar com a forma "VA" por tabela cruzada.
         for fragmento, aliases in _FORMA_ALIASES:
-            if fragmento in nome_lower:
-                if any(a in texto_lower for a in aliases):
-                    return forma
+            aliases_normalizados = [_sem_acento(a) for a in aliases]
+            gatilho = fragmento in nome_normalizado
+            if fragmento != "ticket":
+                gatilho = gatilho or nome_normalizado in aliases_normalizados
+            if gatilho and any(a in tokens_texto for a in aliases_normalizados):
+                return forma
 
     return None
 
@@ -285,6 +330,7 @@ def extrair_forma_pagamento(texto: str, formas: list):
 _COMANDOS_CONHECIDOS = (
     "ajuda", "saldo", "resumo", "gastos", "excluir", "editar ultimo",
     "forma ", "categoria ", "fixa ", "entrada ", "apelido ", "vincular ", "grupo",
+    "paguei",
 )
 
 

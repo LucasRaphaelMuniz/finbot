@@ -27,7 +27,7 @@ import { Wrap, Box } from "./styles";
 import { Field, Botao, Mensagem } from "@/components/AuthCard/styles";
 import Loading from "@/components/Loading";
 import TelefoneInput from "@/components/TelefoneInput";
-import { CONVITE_PENDENTE_KEY, VEIO_DO_BOT_KEY } from "@/utils/constants";
+import { CONVITE_PENDENTE_KEY, VEIO_DO_BOT_KEY, WHATSAPP_PENDENTE_KEY } from "@/utils/constants";
 
 // modos possíveis:
 // verificando -> (convite_tentando | telefone)
@@ -48,6 +48,15 @@ export default function CompletarCadastro({ onConcluido }) {
   const [enviando, setEnviando] = useState(false);
 
   useEffect(() => {
+    // WhatsApp informado opcionalmente no formulário de cadastro
+    // (page.jsx) — só pré-preenche o campo, o OTP abaixo continua
+    // obrigatório de qualquer forma (ver utils/constants.js).
+    const whatsappPendente = localStorage.getItem(WHATSAPP_PENDENTE_KEY);
+    if (whatsappPendente) {
+      setTelefone(whatsappPendente);
+      localStorage.removeItem(WHATSAPP_PENDENTE_KEY);
+    }
+
     const codigoPendente = localStorage.getItem(CONVITE_PENDENTE_KEY);
     if (codigoPendente) {
       setCodigoConvite(codigoPendente);

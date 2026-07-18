@@ -68,7 +68,7 @@ from parser import (
     extrair_parcelas,
     eh_entrada,
 )
-from comandos import cmd_saldo, cmd_resumo, cmd_limite, cmd_ajuda, cmd_gastos
+from comandos import cmd_saldo, cmd_resumo, cmd_limite, cmd_ajuda, cmd_gastos, cmd_paguei_fatura
 
 
 def _brl(valor: float) -> str:
@@ -139,6 +139,8 @@ def processar_mensagem(telefone: str, mensagem: str) -> str:
             return cmd_resumo(uid)
         if lower.startswith("limite "):
             return cmd_limite(uid, lower)
+        if lower.startswith("paguei") and "fatura" in lower:
+            return cmd_paguei_fatura(uid, lower)
         if lower == "gastos":
             return cmd_gastos(uid)
         if lower.startswith("excluir"):
@@ -434,7 +436,7 @@ def _processar_input_livre(uid: int, mensagem: str) -> str:
         valor_temp=valor,
         categoria_temp=categoria["id"] if categoria else None,
         forma_temp=forma["id"] if forma else None,
-        dados_temp={"parcelas": parcelas} if parcelas else None,
+        dados_temp={"parcelas": parcelas, "descricao": mensagem},
     )
 
     if not categoria:
@@ -515,6 +517,29 @@ def _processar_sessao(uid: int, sessao: dict, mensagem: str) -> str:
         if not cat:
             return f"❌ Categoria inválida.\n{_menu_categorias(categorias)}"
 
+        # Bug real (17/07/2026): "VA atualizacao 264" já tinha a forma
+        # detectada pelo parser (forma_temp) no input livre, mas esse passo
+        # sempre pulava pro menu de forma perguntando de novo, descartando
+        # o que já tinha sido reconhecido. Se forma_temp existe, registra
+        # direto em vez de perguntar de novo.
+        if sessao.get("forma_temp"):
+            formas = get_formas_pagamento(uid)
+            forma  = next((f for f in formas if f["id"] == sessao["forma_temp"]), None)
+            dados    = get_dados_temp(sessao)
+            parcelas = dados.get("parcelas")
+            descricao = dados.get("descricao", "")
+            deletar_sessao(uid)
+            valor = float(sessao["valor_temp"])
+            if not forma:
+                # forma_temp apontava pra algo que sumiu entre a detecção e
+                # agora (removida) — cai pro menu em vez de quebrar.
+                criar_sessao(uid, etapa="aguardando_pagamento", valor_temp=valor,
+                             categoria_temp=cat["id"], dados_temp=dados)
+                return _menu_formas(get_formas_pagamento(uid))
+            if parcelas:
+                return _registrar_parcelado_e_confirmar(uid, forma, cat, valor, parcelas, descricao)
+            return _registrar_e_confirmar(uid, forma, cat, valor, descricao)
+
         formas = get_formas_pagamento(uid)
         atualizar_sessao(uid, etapa="aguardando_pagamento", categoria_temp=cat["id"])
         return _menu_formas(formas)
@@ -528,6 +553,7 @@ def _processar_sessao(uid: int, sessao: dict, mensagem: str) -> str:
         sessao_atual = get_sessao_ativa(uid)
         dados    = get_dados_temp(sessao_atual or sessao)
         parcelas = dados.get("parcelas")
+        descricao = dados.get("descricao", "")
         deletar_sessao(uid)
 
         categorias = get_categorias(uid)
@@ -536,8 +562,8 @@ def _processar_sessao(uid: int, sessao: dict, mensagem: str) -> str:
         valor  = float(sessao_atual["valor_temp"] if sessao_atual else sessao["valor_temp"])
 
         if parcelas:
-            return _registrar_parcelado_e_confirmar(uid, forma, cat, valor, parcelas, "")
-        return _registrar_e_confirmar(uid, forma, cat, valor, "")
+            return _registrar_parcelado_e_confirmar(uid, forma, cat, valor, parcelas, descricao)
+        return _registrar_e_confirmar(uid, forma, cat, valor, descricao)
 
     if etapa == "aguardando_confirmacao_exclusao_parcela":
         return _processar_confirmacao_exclusao_parcela(uid, sessao, mensagem)
@@ -632,6 +658,7 @@ def _registrar_e_confirmar(uid: int, forma: dict, categoria: dict,
     registrar_gasto(
         uid, forma["id"], categoria["id"], valor, descricao,
         grupo_id=grupo_id, dia_fechamento=forma.get("dia_fechamento"),
+        dia_vencimento=forma.get("dia_vencimento"),
     )
     saldo = get_saldo_forma(uid, forma["id"])
 

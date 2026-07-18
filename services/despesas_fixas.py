@@ -146,7 +146,7 @@ def confirmar_lancamento_fixa(usuario_id: int, fixa_id: int, competencia_str: st
         with conn.cursor() as cur:
             if gid:
                 cur.execute(
-                    """SELECT f.*, fp.dia_fechamento
+                    """SELECT f.*, fp.dia_fechamento, fp.dia_vencimento
                        FROM despesas_fixas f
                        LEFT JOIN formas_pagamento fp ON fp.id = f.forma_pagamento_id
                        WHERE f.id = %s AND f.grupo_id = %s AND f.ativa = TRUE""",
@@ -154,7 +154,7 @@ def confirmar_lancamento_fixa(usuario_id: int, fixa_id: int, competencia_str: st
                 )
             else:
                 cur.execute(
-                    """SELECT f.*, fp.dia_fechamento
+                    """SELECT f.*, fp.dia_fechamento, fp.dia_vencimento
                        FROM despesas_fixas f
                        LEFT JOIN formas_pagamento fp ON fp.id = f.forma_pagamento_id
                        WHERE f.id = %s AND f.usuario_id = %s AND f.grupo_id IS NULL AND f.ativa = TRUE""",
@@ -217,14 +217,14 @@ def lancar_despesas_fixas_do_mes(hoje: date = None) -> list[dict]:
 
     with get_conn() as conn:
         with conn.cursor() as cur:
-            # LEFT JOIN pra trazer o dia_fechamento da forma de pagamento
-            # junto (evita 1 SELECT extra por despesa fixa dentro do loop).
-            # Despesa fixa sem forma_pagamento_id, ou com forma sem
-            # dia_fechamento (pix/débito), cai em dia_fechamento NULL —
-            # calcular_competencia trata isso como "sem cartão", mesma regra
-            # de compra avulsa.
+            # LEFT JOIN pra trazer dia_fechamento/dia_vencimento da forma de
+            # pagamento junto (evita 1 SELECT extra por despesa fixa dentro
+            # do loop). Despesa fixa sem forma_pagamento_id, ou com forma
+            # sem dia_fechamento (pix/débito/Custo Fixo), cai em
+            # dia_fechamento NULL — calcular_competencia trata isso como
+            # "sem cartão", mesma regra de compra avulsa.
             cur.execute(
-                """SELECT f.*, fp.dia_fechamento
+                """SELECT f.*, fp.dia_fechamento, fp.dia_vencimento
                    FROM despesas_fixas f
                    LEFT JOIN formas_pagamento fp ON fp.id = f.forma_pagamento_id
                    WHERE f.ativa = TRUE"""
@@ -236,7 +236,7 @@ def lancar_despesas_fixas_do_mes(hoje: date = None) -> list[dict]:
             if hoje.day != dia_efetivo:
                 continue
 
-            competencia = calcular_competencia(hoje, fixa.get("dia_fechamento"))
+            competencia = calcular_competencia(hoje, fixa.get("dia_fechamento"), fixa.get("dia_vencimento"))
             valor_lancado, usar_pendente = _valor_efetivo(fixa, hoje)
 
             with conn.cursor() as cur:

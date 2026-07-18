@@ -155,13 +155,14 @@ def remover_forma_pagamento(usuario_id: int, nome_forma: str) -> bool:
 
 def registrar_gasto(usuario_id: int, forma_id: int, categoria_id: int,
                     valor: float, descricao: str, grupo_id: int = None,
-                    dia_fechamento: int = None):
+                    dia_fechamento: int = None, dia_vencimento: int = None):
     """
-    dia_fechamento: dia de fechamento da forma de pagamento usada (Fase 3.2),
-    usado para calcular a competência do gasto (ver services/competencia.py).
-    Sem dia_fechamento (pix/dinheiro/ticket), a competência é o mês corrente.
+    dia_fechamento/dia_vencimento: dados da forma de pagamento usada (Fase
+    3.2 / migração 019), usados para calcular a competência do gasto (ver
+    services/competencia.py). Sem dia_fechamento (pix/dinheiro/ticket), a
+    competência é o mês corrente.
     """
-    competencia = calcular_competencia(date.today(), dia_fechamento)
+    competencia = calcular_competencia(date.today(), dia_fechamento, dia_vencimento)
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
