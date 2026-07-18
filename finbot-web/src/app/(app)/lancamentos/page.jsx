@@ -264,17 +264,13 @@ function ModalNovoLancamento({ aberto, onFechar, onSalvo, onErro }) {
           setEnviando(false);
           return;
         }
-        // Parcelamento ainda não tem endpoint dedicado na API web (só o bot
-        // cria compra parcelada, via services/parcelamento.py) — a Fase 4.3
-        // não previu isso no contrato REST. Registro parcelado pela web fica
-        // pendente; aqui só bloqueio com uma mensagem clara em vez de
-        // fingir que funciona.
-        if (parcelado) {
-          setErro("Lançamento parcelado ainda não é suportado pela web — use o WhatsApp por enquanto.");
-          setEnviando(false);
-          return;
-        }
-        await api.post("/gastos", { valor, descricao, categoria_id: categoriaId, forma_pagamento_id: formaId });
+        // `parcelas` >= 2 faz o POST /gastos criar a compra parcelada
+        // inteira (services/parcelamento.py — a mesma do bot; N gastos,
+        // 1 por parcela, competência própria). Sem parcelas = avulso.
+        await api.post("/gastos", {
+          valor, descricao, categoria_id: categoriaId, forma_pagamento_id: formaId,
+          ...(parcelado && parcelas >= 2 ? { parcelas } : {}),
+        });
       }
       resetar();
       onSalvo();

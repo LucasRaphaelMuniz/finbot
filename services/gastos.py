@@ -12,6 +12,7 @@ from db import get_conn, _get_grupo_id, registrar_gasto
 from services.categorias import categoria_pertence_ao_usuario
 from services.competencia import calcular_competencia
 from services.despesas_fixas import _dia_efetivo
+from services.parcelamento import criar_compra_parcelada
 from utils.app_error import AppError
 
 
@@ -186,6 +187,40 @@ def criar_gasto(usuario_id: int, forma_pagamento_id: int, categoria_id: int,
         usuario_id, forma_pagamento_id, categoria_id, valor, descricao,
         grupo_id=gid, dia_fechamento=dia_fechamento,
     )
+
+
+def criar_gasto_parcelado(usuario_id: int, forma: dict, categoria_id: int,
+                           valor_total: float, parcelas: int,
+                           descricao: str = "") -> dict:
+    """
+    Versão web do registro parcelado (pedido do Lucas em 18/07/2026 — o
+    modal de novo lançamento tinha o checkbox mas bloqueava com "use o
+    WhatsApp"). Reusa services/parcelamento.criar_compra_parcelada, a MESMA
+    função do bot — competência por parcela, divisão de centavos e regra de
+    fechamento idênticas não importa por onde a compra entrou (mesma
+    decisão de sempre: 1 fonte de verdade pra regra de negócio).
+
+    Mesmas validações do criar_gasto avulso (categoria do grupo, Fase D3) +
+    limites de parcelas espelhando o front (2..48).
+    """
+    if not categoria_pertence_ao_usuario(usuario_id, categoria_id):
+        raise AppError("Categoria inválida.", 400, "categoria_invalida")
+    if not 2 <= parcelas <= 48:
+        raise AppError("Número de parcelas deve estar entre 2 e 48.", 400, "parcelas_invalidas")
+
+    with get_conn() as conn:
+        gid = _get_grupo_id(conn, usuario_id)
+
+    compra, gastos_criados, valor_parcela = criar_compra_parcelada(
+        usuario_id, gid, forma, {"id": categoria_id}, valor_total, parcelas, descricao
+    )
+    return {
+        "compra": compra,
+        "parcelas": len(gastos_criados),
+        "valor_parcela": valor_parcela,
+        "competencia_primeira": gastos_criados[0]["competencia"].isoformat()
+            if gastos_criados else None,
+    }
 
 
 _CAMPOS_EDITAVEIS = ("valor", "descricao", "categoria_id", "forma_pagamento_id")

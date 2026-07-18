@@ -4,7 +4,10 @@ from flask import Blueprint, request, g
 
 from middlewares.ensure_authenticated import ensure_authenticated, requer_grupo
 from utils.app_error import AppError
-from services.gastos import listar_gastos, criar_gasto, atualizar_gasto, remover_gasto, obter_gasto
+from services.gastos import (
+    listar_gastos, criar_gasto, criar_gasto_parcelado, atualizar_gasto,
+    remover_gasto, obter_gasto,
+)
 from services.parcelamento import excluir_compra_parcelada
 from db import get_formas_pagamento
 
@@ -44,6 +47,17 @@ def criar():
     )
     if not forma:
         raise AppError("Forma de pagamento não encontrada.", 404, "forma_nao_encontrada")
+
+    # `parcelas` >= 2 no body = compra parcelada (paridade com o bot,
+    # pedido do Lucas em 18/07/2026) — mesma services/parcelamento por
+    # baixo, competência por parcela idêntica à do WhatsApp.
+    parcelas = dados.get("parcelas")
+    if parcelas and int(parcelas) >= 2:
+        resultado = criar_gasto_parcelado(
+            g.usuario_id, forma, dados["categoria_id"],
+            float(dados["valor"]), int(parcelas), dados.get("descricao", ""),
+        )
+        return resultado, 201
 
     gasto = criar_gasto(
         g.usuario_id, dados["forma_pagamento_id"], dados["categoria_id"],
