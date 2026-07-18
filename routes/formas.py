@@ -6,7 +6,7 @@ from middlewares.ensure_authenticated import ensure_authenticated, requer_grupo
 from utils.app_error import AppError
 from db import get_formas_pagamento
 from services.formas import criar_forma, atualizar_forma, remover_forma
-from services.faturas import status_cartao, marcar_fatura_paga
+from services.faturas import status_cartao
 
 bp = Blueprint("formas", __name__, url_prefix="/api/formas")
 
@@ -63,24 +63,11 @@ def remover(forma_id):
 @ensure_authenticated
 @requer_grupo
 def status_cartao_view(forma_id):
-    """Limite rotativo real (fatura fechada a pagar + fatura aberta +
-    limite usado/disponível) — services/faturas.py, migração 021. Só faz
-    sentido pra formas com dia_fechamento; devolve os totais zerados pra
-    quem não tem (o front decide se mostra ou não)."""
+    """Fatura atual (= gasto do mês do cartão) vs limite + fatura anterior
+    a pagar — services/faturas.py, modelo final de 18/07/2026. Só faz
+    sentido pra formas com dia_fechamento; devolve totais zerados pra quem
+    não tem (o front decide se mostra)."""
     status = status_cartao(g.usuario_id, forma_id)
     if not status:
         raise AppError("Forma de pagamento não encontrada.", 404, "nao_encontrado")
     return status
-
-
-@bp.route("/<int:forma_id>/pagar-fatura", methods=["POST"])
-@ensure_authenticated
-@requer_grupo
-def pagar_fatura(forma_id):
-    """Marca a fatura de uma competência (padrão: mês atual) como paga.
-    Idempotente — chamar de novo não duplica nem quebra."""
-    dados = request.get_json(silent=True) or {}
-    resultado = marcar_fatura_paga(g.usuario_id, forma_id, competencia=dados.get("competencia"))
-    if not resultado:
-        raise AppError("Forma de pagamento não encontrada.", 404, "nao_encontrado")
-    return resultado, 201

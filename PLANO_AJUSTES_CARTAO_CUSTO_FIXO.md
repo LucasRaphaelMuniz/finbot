@@ -1,5 +1,22 @@
 # Plano — Custo Fixo, provisionamento de cartão, limite rotativo e WhatsApp no cadastro
 
+## MODELO FINAL DO CARTÃO (18/07/2026, terceira e última iteração)
+
+Uma frase: **o gasto mensal do cartão e o valor da fatura são o mesmo
+número** — o que se gasta no cartão em julho É a fatura de julho; a única
+diferença é quando sai do bolso (agosto, provisão de caixa).
+
+- Controle: `gastos.competencia` = mês da fatura (dia_fechamento). Saldo do
+  bot/web mostra fatura atual vs limite_mensal + "fatura anterior a pagar
+  em <mês>". Dashboards/lançamentos mostram a compra no mês em que foi feita.
+- Caixa: bloco `caixa` no /api/resumo provisiona a fatura no mês do
+  vencimento (dia_vencimento, com fallback = mês seguinte ao fechamento).
+- REMOVIDO o "limite rotativo" da seção C (migração 024 dropa
+  faturas_pagas; comando "paguei a fatura" e endpoint de pagar fatura
+  apagados): modelava o limite como o banco enxerga (parcelas futuras +
+  fatura não paga), não como o Lucas acompanha o orçamento. Registro do
+  porquê está em services/faturas.py — não reintroduzir sem ler aquilo.
+
 ## REVISÃO (17-18/07/2026): modelo B trocado por "fatura como conta a pagar"
 
 O modelo original da seção B (competência = mês do vencimento, migração 020)

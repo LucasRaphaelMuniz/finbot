@@ -68,7 +68,7 @@ from parser import (
     extrair_parcelas,
     eh_entrada,
 )
-from comandos import cmd_saldo, cmd_resumo, cmd_limite, cmd_ajuda, cmd_gastos, cmd_paguei_fatura
+from comandos import cmd_saldo, cmd_resumo, cmd_limite, cmd_ajuda, cmd_gastos
 
 
 def _brl(valor: float) -> str:
@@ -139,8 +139,6 @@ def processar_mensagem(telefone: str, mensagem: str) -> str:
             return cmd_resumo(uid)
         if lower.startswith("limite "):
             return cmd_limite(uid, lower)
-        if lower.startswith("paguei") and "fatura" in lower:
-            return cmd_paguei_fatura(uid, lower)
         if lower == "gastos":
             return cmd_gastos(uid)
         if lower.startswith("excluir"):

@@ -2,7 +2,7 @@ import re
 from datetime import datetime
 from db import get_saldo_todas_formas, get_resumo_mes, atualizar_limite, get_ultimos_gastos, get_formas_pagamento
 from services.entradas import get_total_entradas_mes
-from services.faturas import status_cartao, marcar_fatura_paga
+from services.faturas import status_cartao
 
 
 _MESES_PT = {
@@ -42,11 +42,10 @@ def cmd_saldo(usuario_id: int, mensagem: str) -> str:
         if not formas:
             return f"❌ Forma de pagamento '{filtro}' não encontrada."
 
-    # Formas tipo cartão (dia_fechamento configurado) mostram limite
-    # rotativo real (services/faturas.py, migração 021) em vez do simples
-    # "gasto do mês" — desde 019/020 a competência do cartão já é o mês do
-    # VENCIMENTO, então "gasto do mês corrente" não é mais "quanto usei do
-    # limite" (ignora fatura fechada a pagar e parcelas futuras).
+    # Cartão (dia_fechamento configurado): gasto do mês = fatura atual —
+    # mesmo número, nomes diferentes (modelo final de 18/07/2026, ver
+    # services/faturas.py e o histórico das 2 tentativas descartadas lá).
+    # A linha extra "fatura anterior" é o que vai sair do caixa agora.
     cartoes_ids = {
         f["id"] for f in get_formas_pagamento(usuario_id) if f.get("dia_fechamento")
     }
@@ -60,28 +59,15 @@ def cmd_saldo(usuario_id: int, mensagem: str) -> str:
         if f["id"] in cartoes_ids:
             status = status_cartao(usuario_id, f["id"])
             if not status:
-                linhas.append("⚠️ Não foi possível calcular o limite rotativo.")
+                linhas.append("⚠️ Não foi possível calcular a fatura.")
                 continue
+            gasto  = status["fatura_atual"]
             limite = status["limite_mensal"]
-            usado  = status["limite_usado"]
-            linhas.append(f"Fatura fechada a pagar: {_brl(status['fatura_fechada_a_pagar'])}")
-            linhas.append(f"Fatura aberta (em formação): {_brl(status['fatura_aberta'])}")
-            if limite:
-                sobra = status["limite_disponivel"]
-                pct   = (usado / limite) * 100
-                linhas.append(f"*Limite disponível: {_brl(sobra)}*")
-                linhas.append(f"Limite usado (rotativo): {_brl(usado)} / {_brl(limite)}")
-                if usado > limite:
-                    linhas.append("🚨 Limite ultrapassado!")
-                elif pct >= 80:
-                    linhas.append(f"⚠️ {pct:.0f}% do limite usado")
-            else:
-                linhas.append(f"Limite usado (rotativo): {_brl(usado)}")
-            linhas.append("_Marque como pago com: *paguei a fatura " + f["nome"].lower() + "*_")
-            continue
+        else:
+            status = None
+            gasto  = float(f["gasto_mes"])
+            limite = float(f["limite_mensal"]) if f["limite_mensal"] else None
 
-        gasto  = float(f["gasto_mes"])
-        limite = float(f["limite_mensal"]) if f["limite_mensal"] else None
         if limite:
             sobra = limite - gasto
             pct   = (gasto / limite) * 100
@@ -94,33 +80,13 @@ def cmd_saldo(usuario_id: int, mensagem: str) -> str:
         else:
             linhas.append(f"Total: {_brl(gasto)} gastos este mês")
 
+        if status and status["fatura_anterior"] > 0:
+            mes_venc = status["vencimento_fatura_anterior"][:7]
+            linhas.append(
+                f"🧾 Fatura anterior a pagar em {mes_venc}: {_brl(status['fatura_anterior'])}"
+            )
+
     return "\n".join(linhas)
-
-
-def cmd_paguei_fatura(usuario_id: int, mensagem: str) -> str:
-    """'paguei a fatura <forma>' / 'paguei fatura <forma>' — marca a fatura
-    do mês corrente como paga (services/faturas.py). Idempotente: rodar de
-    novo não duplica nem quebra."""
-    m = re.match(r"paguei\s+(?:a\s+)?fatura\s+(.+)$", mensagem.strip(), re.IGNORECASE)
-    if not m:
-        return "❌ Formato correto: *paguei a fatura nubank*"
-
-    forma_nome = m.group(1).strip()
-    formas = [f for f in get_formas_pagamento(usuario_id) if f.get("dia_fechamento")]
-    forma = next((f for f in formas if forma_nome.lower() in f["nome"].lower()), None)
-    if not forma:
-        return f"❌ Forma de pagamento (cartão) '{forma_nome}' não encontrada."
-
-    resultado = marcar_fatura_paga(usuario_id, forma["id"])
-    if not resultado:
-        return f"❌ Não foi possível marcar a fatura de '{forma['nome']}' como paga."
-
-    status = status_cartao(usuario_id, forma["id"])
-    disponivel = _brl(status["limite_disponivel"]) if status and status["limite_disponivel"] is not None else "—"
-    return (
-        f"✅ Fatura de *{forma['nome']}* ({_mes_ano()}) marcada como paga!\n"
-        f"💳 Limite disponível agora: {disponivel}"
-    )
 
 
 def cmd_resumo(usuario_id: int) -> str:
@@ -220,9 +186,7 @@ def cmd_ajuda() -> str:
         "💳 *Gerenciar formas de pagamento:*\n"
         "• *forma add Nubank 2000* — adiciona forma com limite\n"
         "• *forma remover Nubank* — remove forma\n"
-        "• *limite cartão 3000* — atualiza limite mensal\n"
-        "• *paguei a fatura nubank* — marca a fatura do mês como paga "
-        "(libera limite rotativo)\n\n"
+        "• *limite cartão 3000* — atualiza limite mensal\n\n"
         "📂 *Gerenciar categorias (por grupo):*\n"
         "• *categoria add Assinaturas* — cria categoria personalizada\n"
         "• *categoria remover Assinaturas* — remove (só personalizadas)\n"

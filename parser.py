@@ -330,7 +330,6 @@ def extrair_forma_pagamento(texto: str, formas: list):
 _COMANDOS_CONHECIDOS = (
     "ajuda", "saldo", "resumo", "gastos", "excluir", "editar ultimo",
     "forma ", "categoria ", "fixa ", "entrada ", "apelido ", "vincular ", "grupo",
-    "paguei",
 )
 
 

@@ -1,0 +1,18 @@
+-- 024: remove faturas_pagas (fim do "limite rotativo", 18/07/2026).
+--
+-- A 021 criou faturas_pagas pra modelar limite rotativo real (fatura
+-- fechada não paga + parcelas futuras comprometendo limite + comando
+-- "paguei a fatura"). Na prática o número resultante não respondia a
+-- pergunta que o Lucas faz todo mês — "quanto gastei no cartão este mês?"
+-- — e adicionava um ritual manual (marcar fatura como paga) sem retorno.
+--
+-- Modelo final (ver services/faturas.py): gasto mensal do cartão = fatura
+-- atual (soma da competência corrente) vs limite_mensal; a fatura anterior
+-- aparece como "a pagar" no mês do vencimento via provisão de caixa
+-- (services/resumo.py). Nada disso precisa de estado extra — tudo deriva
+-- de `gastos` + dia_fechamento/dia_vencimento.
+--
+-- Só havia dados de backfill automático na tabela (o comando de marcar
+-- nunca chegou a produção — deploy não aconteceu entre 021 e esta), então
+-- dropar não descarta nenhum dado inserido por pessoa.
+DROP TABLE IF EXISTS faturas_pagas;
