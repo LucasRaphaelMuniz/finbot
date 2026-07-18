@@ -165,9 +165,10 @@ function FormForma({ forma, onSalvo, onErro }) {
             placeholder="ex: 5"
           />
           <small style={{ opacity: 0.7 }}>
-            Data em que a fatura é paga — o gasto conta no orçamento desse
-            mês, não no mês em que a fatura fechou. Sem preencher, assume o
-            mês seguinte ao fechamento (caso mais comum).
+            Data em que a fatura é paga — usada pra provisionar a fatura no
+            caixa do mês certo (os gastos continuam aparecendo no mês da
+            compra). Sem preencher, assume o mês seguinte ao fechamento
+            (caso mais comum).
           </small>
         </Field>
       )}

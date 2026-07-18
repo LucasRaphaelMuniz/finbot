@@ -16,7 +16,7 @@ from datetime import date
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from parser import extrair_parcelas
-from services.competencia import calcular_competencia, somar_meses
+from services.competencia import calcular_competencia, mes_vencimento, somar_meses
 from services.parcelamento import dividir_parcelas, formatar_competencia
 
 
@@ -49,59 +49,63 @@ def test_extrair_parcelas_1x_nao_e_parcelamento():
 
 
 # ---------------------------------------------------------------------------
-# calcular_competencia
-#
-# Migração 019/020 (decisão P, aceita por Lucas em 17/07/2026): competência
-# final de gasto em cartão passou a ser o mês do VENCIMENTO da fatura, não
-# o mês da fatura em si — por isso, sem dia_vencimento informado (fallback,
-# caso mais comum no Brasil), toda compra em forma com dia_fechamento anda
-# +1 mês a mais do que andava antes (que só considerava o fechamento).
+# calcular_competencia — competência = MÊS DA FATURA (regra original da
+# Fase 3.2, restaurada pela migração 022; ver nota em services/competencia.py:
+# o experimento de competência = mês do vencimento foi revertido em
+# 17-18/07/2026 porque tirava a compra de hoje das telas do mês corrente).
 # ---------------------------------------------------------------------------
 
 def test_competencia_sem_dia_fechamento_e_mes_da_data():
-    # Forma sem cartão (pix/débito/Custo Fixo) — nem fechamento nem
-    # vencimento existem, competência é sempre o mês da própria compra.
     assert calcular_competencia(date(2026, 7, 15), None) == date(2026, 7, 1)
 
 
-def test_competencia_antes_do_fechamento_sem_vencimento_vai_pro_mes_seguinte():
-    # dia_fechamento=25, compra dia 20 -> fatura de julho. Sem
-    # dia_vencimento, fallback empurra +1 mês (vencimento presumido em agosto).
-    assert calcular_competencia(date(2026, 7, 20), 25) == date(2026, 8, 1)
+def test_competencia_antes_do_fechamento_fica_no_mes_atual():
+    # dia_fechamento=25, compra dia 20 -> ainda dentro da fatura de julho
+    assert calcular_competencia(date(2026, 7, 20), 25) == date(2026, 7, 1)
 
 
-def test_competencia_depois_do_fechamento_sem_vencimento_vai_2_meses_a_frente():
-    # dia_fechamento=25, compra dia 28 -> fatura já fechou, mês de agosto.
-    # Sem dia_vencimento, fallback empurra mais +1 mês -> setembro.
-    assert calcular_competencia(date(2026, 7, 28), 25) == date(2026, 9, 1)
+def test_competencia_depois_do_fechamento_vai_pro_mes_seguinte():
+    # dia_fechamento=25, compra dia 28 -> fatura de julho já fechou
+    assert calcular_competencia(date(2026, 7, 28), 25) == date(2026, 8, 1)
 
 
-def test_competencia_no_dia_exato_do_fechamento_sem_vencimento():
-    assert calcular_competencia(date(2026, 7, 25), 25) == date(2026, 8, 1)
+def test_competencia_no_dia_exato_do_fechamento_fica_no_mes_atual():
+    assert calcular_competencia(date(2026, 7, 25), 25) == date(2026, 7, 1)
 
 
-def test_competencia_depois_do_fechamento_em_dezembro_sem_vencimento():
-    # fatura de janeiro/2027 (fechou em dezembro), fallback +1 -> fevereiro/2027
-    assert calcular_competencia(date(2026, 12, 28), 25) == date(2027, 2, 1)
+def test_competencia_depois_do_fechamento_em_dezembro_vira_janeiro():
+    assert calcular_competencia(date(2026, 12, 28), 25) == date(2027, 1, 1)
 
 
-def test_competencia_com_vencimento_no_mesmo_mes_do_fechamento_nao_desloca():
-    # Cartão que fecha dia 5 e vence dia 12 (mesmo mês) — dia_vencimento
-    # (12) > dia_fechamento (5), então o vencimento cai no mês da própria
-    # fatura, sem deslocamento extra.
-    assert calcular_competencia(date(2026, 7, 3), 5, 12) == date(2026, 7, 1)
+# ---------------------------------------------------------------------------
+# mes_vencimento — em qual mês a fatura de uma competência PESA NO CAIXA
+# (migração 019 + modelo "fatura como conta a pagar"). Nunca altera
+# gastos.competencia — só é usada por services/resumo.py (provisão de
+# caixa) e services/faturas.py (limite rotativo).
+# ---------------------------------------------------------------------------
+
+def test_mes_vencimento_sem_cartao_e_o_proprio_mes():
+    # pix/débito/Custo Fixo: sai do caixa no mês em que aconteceu
+    assert mes_vencimento(date(2026, 7, 1), None, None) == date(2026, 7, 1)
 
 
-def test_competencia_com_vencimento_no_mes_seguinte_ao_fechamento():
-    # Cartão que fecha dia 25 e vence dia 5 do mês seguinte — dia_vencimento
-    # (5) <= dia_fechamento (25), desloca +1 mês (mesmo resultado do fallback).
-    assert calcular_competencia(date(2026, 7, 20), 25, 5) == date(2026, 8, 1)
+def test_mes_vencimento_fallback_sem_dia_vencimento_e_mes_seguinte():
+    # fecha ~25, sem vencimento informado -> assume mês seguinte (caso comum)
+    assert mes_vencimento(date(2026, 7, 1), 25, None) == date(2026, 8, 1)
 
 
-def test_competencia_compra_depois_do_fechamento_com_vencimento_configurado():
-    # dia_fechamento=25, compra dia 28 (fatura de agosto) + dia_vencimento=5
-    # (<=25, desloca +1) -> vencimento em setembro.
-    assert calcular_competencia(date(2026, 7, 28), 25, 5) == date(2026, 9, 1)
+def test_mes_vencimento_vencimento_depois_do_fechamento_mesmo_mes():
+    # fecha dia 5, vence dia 12 -> mesma competência
+    assert mes_vencimento(date(2026, 7, 1), 5, 12) == date(2026, 7, 1)
+
+
+def test_mes_vencimento_vencimento_antes_do_fechamento_mes_seguinte():
+    # fecha dia 25, vence dia 5 -> mês seguinte
+    assert mes_vencimento(date(2026, 7, 1), 25, 5) == date(2026, 8, 1)
+
+
+def test_mes_vencimento_vira_o_ano():
+    assert mes_vencimento(date(2026, 12, 1), 25, 5) == date(2027, 1, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +122,15 @@ def test_somar_meses_vira_o_ano():
 
 def test_somar_zero_meses_e_a_mesma_competencia():
     assert somar_meses(date(2026, 7, 1), 0) == date(2026, 7, 1)
+
+
+def test_somar_meses_negativo_volta_um_mes():
+    # usado por services/faturas.py pra achar a fatura fechada (aberta - 1)
+    assert somar_meses(date(2026, 7, 1), -1) == date(2026, 6, 1)
+
+
+def test_somar_meses_negativo_vira_o_ano_pra_tras():
+    assert somar_meses(date(2026, 1, 1), -1) == date(2025, 12, 1)
 
 
 # ---------------------------------------------------------------------------

@@ -47,8 +47,7 @@ def criar_compra_parcelada(usuario_id: int, grupo_id, forma: dict, categoria: di
     """
     data_compra = date.today()
     dia_fechamento = forma.get("dia_fechamento")
-    dia_vencimento = forma.get("dia_vencimento")
-    competencia_1a = calcular_competencia(data_compra, dia_fechamento, dia_vencimento)
+    competencia_1a = calcular_competencia(data_compra, dia_fechamento)
     valores = dividir_parcelas(valor_total, parcelas)
     categoria_id = categoria["id"] if categoria else None
 

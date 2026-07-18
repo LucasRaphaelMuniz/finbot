@@ -18,6 +18,7 @@ coberto por fatura marcada como paga (`faturas_pagas`). Sem tabela de
 from datetime import date
 
 from db import get_conn, _get_grupo_id
+from services.competencia import calcular_competencia, mes_vencimento, somar_meses
 
 
 def _forma_pertence_ao_usuario(conn, usuario_id: int, forma_id: int) -> bool:
@@ -38,10 +39,13 @@ def _forma_pertence_ao_usuario(conn, usuario_id: int, forma_id: int) -> bool:
 
 def marcar_fatura_paga(usuario_id: int, forma_id: int, competencia: str = None) -> dict | None:
     """
-    Marca a fatura de `competencia` (padrão: mês atual — a fatura que
-    acabou de vencer/está vencendo agora) como paga. Idempotente: marcar de
-    novo a mesma competência não duplica (UNIQUE de 021) nem quebra —
-    retorna o registro já existente.
+    Marca a fatura de `competencia` como paga. Padrão (sem competencia
+    explícita): a fatura FECHADA mais recente — a anterior à que ainda
+    aceita compras hoje. É a que a pessoa quer dizer com "paguei a fatura":
+    a aberta ainda nem fechou, não tem como ter sido paga.
+
+    Idempotente: marcar de novo a mesma competência não duplica (UNIQUE de
+    021) nem quebra — retorna o registro já existente.
 
     Retorna None se a forma não existe ou não pertence ao usuário/grupo.
     """
@@ -49,8 +53,16 @@ def marcar_fatura_paga(usuario_id: int, forma_id: int, competencia: str = None) 
         if not _forma_pertence_ao_usuario(conn, usuario_id, forma_id):
             return None
 
-        comp = date(*(int(p) for p in competencia.split("-")[:2]), 1) if competencia \
-            else date.today().replace(day=1)
+        if competencia:
+            comp = date(*(int(p) for p in competencia.split("-")[:2]), 1)
+        else:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT dia_fechamento FROM formas_pagamento WHERE id = %s", (forma_id,)
+                )
+                row = cur.fetchone()
+            dia_fechamento = row["dia_fechamento"] if row else None
+            comp = somar_meses(calcular_competencia(date.today(), dia_fechamento), -1)
 
         with conn.cursor() as cur:
             cur.execute(
@@ -76,20 +88,23 @@ def marcar_fatura_paga(usuario_id: int, forma_id: int, competencia: str = None) 
 def status_cartao(usuario_id: int, forma_id: int) -> dict | None:
     """
     Retorna o status de limite rotativo de uma forma de pagamento tipo
-    cartão: fatura aberta (mês seguinte ao corrente — ainda acumulando,
-    não fechou), fatura fechada a pagar (mês corrente, sem faturas_pagas
-    ainda), limite_usado (tudo que não foi coberto por fatura paga) e
-    limite_disponivel. Retorna None se a forma não existe/não pertence ao
-    usuário.
+    cartão. Sob o modelo "fatura como conta a pagar" (revisão de
+    17-18/07/2026, ver services/competencia.py):
+
+    - fatura ABERTA: a competência que ainda aceita compras hoje —
+      `calcular_competencia(hoje, dia_fechamento)`. Antes do fechamento do
+      mês, é o próprio mês; depois, o seguinte.
+    - fatura FECHADA a pagar: a competência anterior à aberta, se ainda não
+      tem registro em faturas_pagas. Vence em `vencimento_fatura_fechada`
+      (mes_vencimento — é essa data que o caixa do resumo provisiona).
+    - limite_usado: tudo que já foi gasto na forma menos o coberto por
+      fatura paga — inclui parcelas futuras, como num cartão real.
+
+    Retorna None se a forma não existe/não pertence ao usuário.
     """
     with get_conn() as conn:
         if not _forma_pertence_ao_usuario(conn, usuario_id, forma_id):
             return None
-
-        hoje = date.today()
-        mes_atual = hoje.replace(day=1)
-        mes_seguinte = date(mes_atual.year + (1 if mes_atual.month == 12 else 0),
-                             1 if mes_atual.month == 12 else mes_atual.month + 1, 1)
 
         with conn.cursor() as cur:
             cur.execute(
@@ -101,6 +116,10 @@ def status_cartao(usuario_id: int, forma_id: int) -> dict | None:
             if not forma:
                 return None
             forma = dict(forma)
+
+            hoje = date.today()
+            comp_aberta = calcular_competencia(hoje, forma.get("dia_fechamento"))
+            comp_fechada = somar_meses(comp_aberta, -1)
 
             cur.execute(
                 """SELECT
@@ -119,12 +138,14 @@ def status_cartao(usuario_id: int, forma_id: int) -> dict | None:
                      ON fpg.forma_pagamento_id = g.forma_pagamento_id
                     AND DATE_TRUNC('month', fpg.competencia) = DATE_TRUNC('month', g.competencia)
                    WHERE g.forma_pagamento_id = %s""",
-                (mes_atual, mes_seguinte, forma_id),
+                (comp_fechada, comp_aberta, forma_id),
             )
             row = dict(cur.fetchone())
 
     limite_mensal = float(forma["limite_mensal"]) if forma["limite_mensal"] else None
     limite_usado = float(row["total_gasto"]) - float(row["total_pago"])
+    venc_fechada = mes_vencimento(comp_fechada, forma.get("dia_fechamento"),
+                                   forma.get("dia_vencimento"))
 
     return {
         "forma_id": forma_id,
@@ -134,8 +155,9 @@ def status_cartao(usuario_id: int, forma_id: int) -> dict | None:
         "limite_disponivel": (limite_mensal - limite_usado) if limite_mensal is not None else None,
         "fatura_fechada_a_pagar": float(row["fatura_fechada_a_pagar"]),
         "fatura_aberta": float(row["fatura_aberta"]),
-        "competencia_fechada": mes_atual.isoformat(),
-        "competencia_aberta": mes_seguinte.isoformat(),
+        "competencia_fechada": comp_fechada.isoformat(),
+        "competencia_aberta": comp_aberta.isoformat(),
+        "vencimento_fatura_fechada": venc_fechada.isoformat(),
     }
 
 

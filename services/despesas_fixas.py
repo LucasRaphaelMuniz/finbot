@@ -236,7 +236,7 @@ def lancar_despesas_fixas_do_mes(hoje: date = None) -> list[dict]:
             if hoje.day != dia_efetivo:
                 continue
 
-            competencia = calcular_competencia(hoje, fixa.get("dia_fechamento"), fixa.get("dia_vencimento"))
+            competencia = calcular_competencia(hoje, fixa.get("dia_fechamento"))
             valor_lancado, usar_pendente = _valor_efetivo(fixa, hoje)
 
             with conn.cursor() as cur:

@@ -148,6 +148,18 @@ def cmd_resumo(usuario_id: int) -> str:
     saldo = total_entradas - total_gastos
     linhas.append(f"💰 *Saldo do mês: {_brl(saldo)}*")
 
+    # Caixa (modelo "fatura como conta a pagar", 17-18/07/2026): o bloco
+    # acima é CONTROLE (o que foi comprado no mês, cartão incluído). Este é
+    # o que sai do bolso no mês — a fatura que vence agora é a do mês
+    # passado. Import local pra evitar ciclo (resumo importa faturas, que
+    # não importa comandos — mas manter o topo do módulo leve).
+    from services.resumo import resumo_mensal
+    caixa = resumo_mensal(usuario_id)["caixa"]
+    if caixa["fatura_a_pagar"] > 0:
+        linhas.append("")
+        linhas.append(f"🧾 Fatura(s) vencendo este mês: {_brl(caixa['fatura_a_pagar'])}")
+        linhas.append(f"🏦 *Saída de caixa do mês: {_brl(caixa['saida_total'])}*")
+
     return "\n".join(linhas)
 
 

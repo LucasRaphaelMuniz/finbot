@@ -658,7 +658,6 @@ def _registrar_e_confirmar(uid: int, forma: dict, categoria: dict,
     registrar_gasto(
         uid, forma["id"], categoria["id"], valor, descricao,
         grupo_id=grupo_id, dia_fechamento=forma.get("dia_fechamento"),
-        dia_vencimento=forma.get("dia_vencimento"),
     )
     saldo = get_saldo_forma(uid, forma["id"])
 

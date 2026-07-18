@@ -1,21 +1,41 @@
 # Plano — Custo Fixo, provisionamento de cartão, limite rotativo e WhatsApp no cadastro
 
-## Status (17/07/2026): código implementado, falta rodar em produção
+## REVISÃO (17-18/07/2026): modelo B trocado por "fatura como conta a pagar"
 
-Tudo abaixo (A–E) está escrito e testado localmente (119 testes, `pytest tests/`).
-O que falta é ação manual do Lucas, porque a sandbox não alcança o Supabase:
+O modelo original da seção B (competência = mês do vencimento, migração 020)
+foi implementado, o Lucas aplicou as migrações — e o problema apareceu no
+uso: a compra de hoje ia direto pro mês seguinte e sumia das telas do mês
+corrente. Impossível acompanhar o mês.
 
-1. `python -m database.migrate` — aplica 019/020/021 (adiciona dia_vencimento,
-   recalcula competência de gastos de cartão existentes, cria faturas_pagas
-   com backfill de meses passados como pagos).
-2. `python scripts/migrar_custo_fixo.py <usuario_id>` — interativo, pergunta
-   quais despesas fixas migram pra "Custo Fixo" e oferece criar a categoria
-   "Assinaturas".
-3. Web: preencher `dia_vencimento` de cada cartão em Formas de pagamento
-   (novo campo, só aparece quando dia_fechamento está preenchido) — sem
-   isso o sistema usa o fallback (vencimento no mês seguinte ao fechamento).
-4. Deploy do finbot-web (Next.js) e do backend Flask no Railway pra essas
-   mudanças valerem no bot e na web.
+Modelo final (aceito pelo Lucas): **um gasto de cartão tem dois eventos** —
+a compra (controle) e o pagamento (caixa) — e cada um vive numa visão:
+
+- `gastos.competencia` = **mês da fatura** (regra original da Fase 3.2, só
+  dia_fechamento — restaurada pela migração 022). A compra aparece no mês
+  em que foi feita, dashboards/lançamentos continuam sendo a visão de
+  controle.
+- O **caixa** provisiona a fatura no mês do vencimento:
+  `services/competencia.py::mes_vencimento()` (função pura nova) + bloco
+  `caixa` no retorno de `/api/resumo` (gastos_nao_cartao, fatura_a_pagar,
+  saida_total, saldo_caixa) + linha "fatura vencendo este mês" no `resumo`
+  do bot. `dia_vencimento` (019) continua existindo — agora só alimenta o
+  caixa, nunca a competência do gasto.
+- `services/faturas.py` reancorado: fatura aberta = a que ainda aceita
+  compras (calcular_competencia de hoje); fechada = a anterior. Limite
+  rotativo inalterado no conceito.
+- Migração 022 desfaz o deslocamento da 020 **só nos gastos anteriores à
+  aplicação dela** (gastos criados depois nasceram pelo código antigo, já
+  corretos — filtro por schema_migrations.applied_at) e rebaseia o
+  backfill de faturas_pagas pra semântica nova.
+
+## Status: falta rodar em produção
+
+1. `python -m database.migrate` — aplica a 022 (019/020/021 já aplicadas).
+2. `git push` + deploy Railway (backend e finbot-web).
+3. `python scripts/migrar_custo_fixo.py <usuario_id>` — Custo Fixo +
+   categoria Assinaturas (interativo).
+4. Web: preencher `dia_vencimento` de cada cartão em Formas de pagamento —
+   sem isso vale o fallback (vencimento no mês seguinte ao fechamento).
 
 Definido com Lucas em 17/07/2026. Decisões já tomadas:
 - Fixas de débito/PIX viram forma "Custo Fixo"; **assinaturas no cartão (seguro, Netflix...) mantêm a forma do cartão** — precisam continuar contando limite e caindo na fatura.

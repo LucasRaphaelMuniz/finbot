@@ -49,7 +49,6 @@ def criar():
         g.usuario_id, dados["forma_pagamento_id"], dados["categoria_id"],
         float(dados["valor"]), dados.get("descricao", ""),
         dia_fechamento=forma.get("dia_fechamento"),
-        dia_vencimento=forma.get("dia_vencimento"),
     )
     return gasto, 201
 

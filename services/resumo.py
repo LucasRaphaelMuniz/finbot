@@ -72,6 +72,45 @@ def resumo_mensal(usuario_id: int, mes: str = None) -> dict:
             )
             entradas_por_mes = {str(r["mes"])[:7]: float(r["total"]) for r in cur.fetchall()}
 
+            # ── Caixa do mês (modelo "fatura como conta a pagar", revisão de
+            # 17-18/07/2026 — ver services/competencia.py) ─────────────────
+            # O que efetivamente SAI do caixa no mês pedido:
+            # 1. gastos não-cartão da competência (débito/pix/Custo Fixo
+            #    saem na hora — LEFT JOIN pra incluir gasto sem forma);
+            # 2. faturas de cartão que VENCEM nesse mês. A fatura que vence
+            #    no mês M é a de competência M (cartão que fecha e vence no
+            #    mesmo mês: dia_vencimento > dia_fechamento) ou M-1 (venc.
+            #    no mês seguinte ao fechamento — fallback quando
+            #    dia_vencimento não está preenchido). Mesma regra de
+            #    mes_vencimento() em services/competencia.py, expressa em
+            #    SQL pra sair em 1 query em vez de 1 por forma.
+            cur.execute(
+                f"""SELECT COALESCE(SUM(g.valor), 0) AS total
+                    FROM gastos g
+                    LEFT JOIN formas_pagamento fp ON fp.id = g.forma_pagamento_id
+                    WHERE {filtro_gastos}
+                      AND (fp.id IS NULL OR fp.dia_fechamento IS NULL)
+                      AND DATE_TRUNC('month', g.competencia) = DATE_TRUNC('month', %s::date)""",
+                (param_gastos, competencia),
+            )
+            gastos_nao_cartao = float(cur.fetchone()["total"])
+
+            cur.execute(
+                f"""SELECT COALESCE(SUM(g.valor), 0) AS total
+                    FROM gastos g
+                    JOIN formas_pagamento fp ON fp.id = g.forma_pagamento_id
+                    WHERE {filtro_gastos}
+                      AND fp.dia_fechamento IS NOT NULL
+                      AND DATE_TRUNC('month', g.competencia) =
+                          DATE_TRUNC('month', %s::date)
+                          - (CASE WHEN fp.dia_vencimento IS NOT NULL
+                                       AND fp.dia_vencimento > fp.dia_fechamento
+                                  THEN INTERVAL '0 months'
+                                  ELSE INTERVAL '1 month' END)""",
+                (param_gastos, competencia),
+            )
+            fatura_a_pagar = float(cur.fetchone()["total"])
+
     total_gastos = sum(c["total"] for c in por_categoria)
     total_entradas = get_total_entradas_competencia(usuario_id, competencia)
 
@@ -110,9 +149,21 @@ def resumo_mensal(usuario_id: int, mes: str = None) -> dict:
 
     return {
         "mes": competencia[:7],
+        # Controle: tudo que foi COMPRADO na competência (inclui cartão na
+        # fatura do mês) — a visão pra saber "quanto estou gastando".
         "total_gastos": total_gastos,
         "total_entradas": total_entradas,
         "saldo": total_entradas - total_gastos,
+        # Caixa: o que efetivamente SAI DO BOLSO no mês — gastos à vista +
+        # faturas de cartão que vencem nele. É aqui que o cartão aparece
+        # "provisionado" pro mês seguinte, sem tirar as compras da visão de
+        # controle acima.
+        "caixa": {
+            "gastos_nao_cartao": gastos_nao_cartao,
+            "fatura_a_pagar": fatura_a_pagar,
+            "saida_total": gastos_nao_cartao + fatura_a_pagar,
+            "saldo_caixa": total_entradas - gastos_nao_cartao - fatura_a_pagar,
+        },
         "pct_limite_medio": pct_limite_medio,
         "por_categoria": por_categoria,
         "fixo_variavel": fixo_variavel,

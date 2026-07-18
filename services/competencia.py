@@ -9,27 +9,25 @@ testável isoladamente.
 from datetime import date
 
 
-def calcular_competencia(data_compra: date, dia_fechamento: int | None,
-                          dia_vencimento: int | None = None) -> date:
+def calcular_competencia(data_compra: date, dia_fechamento: int | None) -> date:
     """
-    Retorna o primeiro dia do mês de competência de um gasto.
+    Retorna o primeiro dia do mês de competência de um gasto — o mês da
+    FATURA a que ele pertence.
 
-    Duas etapas independentes (decisão P, aceita por Lucas em 17/07/2026):
+    Regra (Fase 3.2 do PLANO_EXECUCAO.md): se a forma de pagamento tem
+    dia_fechamento (cartão) e a compra aconteceu depois do fechamento daquele
+    mês, a competência é o mês seguinte — a fatura vigente já fechou. Sem
+    dia_fechamento (pix/dinheiro/ticket/Custo Fixo), a competência é sempre
+    o mês da própria data da compra.
 
-    1. Mês da FATURA: se a forma de pagamento tem dia_fechamento (cartão) e
-       a compra aconteceu depois do fechamento daquele mês, a fatura é a do
-       mês seguinte — a vigente já fechou. Sem dia_fechamento
-       (pix/dinheiro/ticket/Custo Fixo), não existe fatura — a competência
-       pára aqui, no mês da própria compra.
-    2. Mês do VENCIMENTO: uma fatura de cartão só sai do caixa quando é
-       paga, não quando fecha — por isso a competência final (o mês que
-       pesa no orçamento) é o mês em que essa fatura VENCE, não o mês em
-       que ela fechou. Se dia_vencimento > dia_fechamento, o vencimento cai
-       no mesmo mês do fechamento (ex.: fecha dia 5, vence dia 12). Caso
-       contrário — dia_vencimento <= dia_fechamento, ou não informado
-       (fallback, caso mais comum no Brasil: fecha por volta do dia 25,
-       vence no mês seguinte por volta do dia 5) — o vencimento cai no mês
-       seguinte ao fechamento.
+    NOTA (17-18/07/2026, reversão da migração 020 pela 022): chegamos a
+    mudar esta função pra competência = mês do VENCIMENTO da fatura
+    ("provisionar o cartão no mês em que é pago"). Revertido: isso fazia a
+    compra de hoje sumir das telas do mês corrente — impossível acompanhar
+    o mês. O modelo final é "fatura como conta a pagar": o gasto fica no
+    mês da fatura (esta função), e só o CAIXA provisiona a fatura no mês do
+    vencimento — via `mes_vencimento()` abaixo, usada por services/resumo.py
+    e services/faturas.py, nunca gravada em gastos.competencia.
     """
     ano, mes = data_compra.year, data_compra.month
     if dia_fechamento and data_compra.day > dia_fechamento:
@@ -37,14 +35,32 @@ def calcular_competencia(data_compra: date, dia_fechamento: int | None,
         if mes > 12:
             mes = 1
             ano += 1
-
-    if dia_fechamento and (dia_vencimento is None or dia_vencimento <= dia_fechamento):
-        mes += 1
-        if mes > 12:
-            mes = 1
-            ano += 1
-
     return date(ano, mes, 1)
+
+
+def mes_vencimento(competencia: date, dia_fechamento: int | None,
+                    dia_vencimento: int | None) -> date:
+    """
+    Dado o mês da fatura (competencia, ver calcular_competencia), retorna o
+    primeiro dia do mês em que essa fatura VENCE — o mês em que ela pesa no
+    caixa (migração 019: dia_vencimento).
+
+    - dia_vencimento > dia_fechamento: fecha e vence no mesmo mês
+      (ex.: fecha dia 5, vence dia 12) — retorna a própria competencia.
+    - dia_vencimento <= dia_fechamento, ou não informado (fallback — caso
+      mais comum no Brasil: fecha ~dia 25, vence ~dia 5 do mês seguinte):
+      vence no mês seguinte.
+    - Sem dia_fechamento (não é cartão): não existe fatura; retorna a
+      própria competencia (o gasto sai do caixa no mês em que aconteceu).
+
+    Função pura, sem banco — testável isoladamente, mesma filosofia de
+    calcular_competencia/somar_meses.
+    """
+    if not dia_fechamento:
+        return competencia
+    if dia_vencimento is not None and dia_vencimento > dia_fechamento:
+        return competencia
+    return somar_meses(competencia, 1)
 
 
 def somar_meses(competencia: date, n: int) -> date:
