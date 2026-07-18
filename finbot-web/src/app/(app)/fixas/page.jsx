@@ -66,6 +66,14 @@ export default function FixasPage() {
             ),
           },
           { key: "dia_lancamento", label: "Todo dia" },
+          {
+            key: "parcelas_total",
+            label: "Prazo",
+            render: (f) =>
+              f.parcelas_total
+                ? `${f.lancadas ?? 0}/${f.parcelas_total} lançadas`
+                : "sem fim",
+          },
         ]}
         rows={dados?.itens}
         loading={loading}
@@ -117,6 +125,7 @@ function FormFixa({ fixa, onSalvo, onErro }) {
   const [dia, setDia] = useState(fixa?.dia_lancamento || "");
   const [categoriaId, setCategoriaId] = useState(fixa?.categoria_id || null);
   const [formaId, setFormaId] = useState(fixa?.forma_pagamento_id || null);
+  const [parcelasTotal, setParcelasTotal] = useState(fixa?.parcelas_total || "");
   const [aplicarAPartir, setAplicarAPartir] = useState("imediato");
   const [erro, setErro] = useState("");
   const [enviando, setEnviando] = useState(false);
@@ -145,6 +154,7 @@ function FormFixa({ fixa, onSalvo, onErro }) {
     const payload = {
       descricao, valor, dia_lancamento: Number(dia),
       categoria_id: categoriaId, forma_pagamento_id: formaId,
+      parcelas_total: parcelasTotal ? Number(parcelasTotal) : null,
       aplicar_a_partir: precisaEscolherVigencia ? aplicarAPartir : "imediato",
     };
     try {
@@ -182,6 +192,18 @@ function FormFixa({ fixa, onSalvo, onErro }) {
       <Field>
         <label htmlFor="forma-fixa">Forma de pagamento (opcional)</label>
         <FormaSelect id="forma-fixa" value={formaId} onChange={setFormaId} incluirTodas />
+      </Field>
+      <Field>
+        <label htmlFor="prazo-fixa">Quantidade de meses (opcional)</label>
+        <input
+          id="prazo-fixa" type="number" min={1} max={600}
+          value={parcelasTotal} onChange={(e) => setParcelasTotal(e.target.value)}
+          placeholder="ex: 48 (financiamento) — vazio = sem fim"
+        />
+        <small style={{ opacity: 0.7 }}>
+          Custo fixo com prazo (financiamento, consórcio): para de lançar
+          sozinho na última parcela.
+        </small>
       </Field>
       {precisaEscolherVigencia && (
         <Field>

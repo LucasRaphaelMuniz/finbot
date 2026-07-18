@@ -151,28 +151,38 @@ if _PRODUCAO_SEM_SECRET:
 # problema recorrente, aí sim vale reconsiderar um Cron Job de verdade.
 # ---------------------------------------------------------------------------
 
+def _rodar_lancadores():
+    """Despesas fixas + entradas fixas, cada um com try próprio — falha num
+    não pode engolir o outro. Idempotentes e com catch-up (>= dia devido),
+    então rodar quantas vezes for não duplica nada."""
+    try:
+        lancados = lancar_despesas_fixas_do_mes()
+        if lancados:
+            logger.info(f"Lançador: {len(lancados)} despesa(s) fixa(s) lançada(s).")
+    except Exception:
+        logger.exception("Lançador de despesas fixas falhou.")
+    try:
+        entradas = lancar_entradas_fixas_do_mes()
+        if entradas:
+            logger.info(f"Lançador: {len(entradas)} entrada(s) fixa(s) lançada(s).")
+    except Exception:
+        logger.exception("Lançador de entradas fixas falhou.")
+
+
 def _loop_lancar_fixas_diario():
+    # Roda JÁ na subida do processo (18/07/2026): com o catch-up nos
+    # lançadores (dia devido <= hoje), um deploy/restart em qualquer hora do
+    # dia lança imediatamente o que estiver pendente no mês — antes, o
+    # processo esperava as 6h do dia seguinte e o gap era coberto por um
+    # botão "Confirmar" manual (removido; custo fixo tem que ser automático).
+    _rodar_lancadores()
     while True:
         agora = datetime.now()
         proxima_execucao = agora.replace(hour=6, minute=0, second=0, microsecond=0)
         if proxima_execucao <= agora:
             proxima_execucao += timedelta(days=1)
         time.sleep((proxima_execucao - agora).total_seconds())
-        try:
-            lancados = lancar_despesas_fixas_do_mes()
-            if lancados:
-                logger.info(f"Lançador diário: {len(lancados)} despesa(s) fixa(s) lançada(s).")
-        except Exception:
-            logger.exception("Lançador diário de despesas fixas falhou.")
-        # Entradas fixas (salário etc., migração 023) no mesmo ciclo — não é
-        # um segundo cron. try separado: falha num lançador não pode engolir
-        # o outro.
-        try:
-            entradas = lancar_entradas_fixas_do_mes()
-            if entradas:
-                logger.info(f"Lançador diário: {len(entradas)} entrada(s) fixa(s) lançada(s).")
-        except Exception:
-            logger.exception("Lançador diário de entradas fixas falhou.")
+        _rodar_lancadores()
 
 
 threading.Thread(target=_loop_lancar_fixas_diario, daemon=True).start()

@@ -63,22 +63,6 @@ export default function LancamentosPage() {
     else refetchEntradas();
   }
 
-  // Botão "Confirmar" nas linhas previstas (custo fixo ainda sem gasto real
-  // pra esse mês — ver services/gastos.py::_projetar_despesas_fixas). É um
-  // catch-up manual, não o caminho automático de verdade: isso é o cron
-  // (jobs/lancar_fixas.py) que ainda precisa ser configurado no Railway —
-  // uma vez configurado, o gasto real já aparece direto, sem passar por
-  // "previsto" nem precisar desse clique.
-  async function handleConfirmarFixa(row) {
-    try {
-      await api.post(`/fixas/${row.despesa_fixa_id}/confirmar`, { competencia: mes });
-      avisar(`"${row.descricao}" confirmado.`);
-      refetchAtual();
-    } catch (err) {
-      avisar(err?.response?.data?.mensagem || "Não foi possível confirmar.", "erro");
-    }
-  }
-
   async function handleExcluir(escopo = "unico") {
     try {
       if (aba === "gastos") {
@@ -150,15 +134,13 @@ export default function LancamentosPage() {
         }}
         linhaAtenuada={(row) => !!row.projetado}
         acoes={(row) =>
-          // Linha projetada (custo fixo previsto, ainda sem gasto real —
-          // ver services/gastos.py::_projetar_despesas_fixas) não tem um
-          // /api/gastos/:id de verdade por trás pra editar/excluir; "id" é
-          // uma string sintética só pra servir de key no React. Confirmar
-          // aqui é catch-up manual, não o caminho automático (esse depende
-          // do cron configurado no Railway).
-          row.projetado ? (
-            <AcaoBtn onClick={() => handleConfirmarFixa(row)}>Confirmar</AcaoBtn>
-          ) : (
+          // Linha projetada (custo fixo previsto, futuro — ver
+          // services/gastos.py::projetar_despesas_fixas) não tem um
+          // /api/gastos/:id real por trás; "id" é string sintética de key.
+          // Sem botão Confirmar (removido 18/07/2026): o lançamento é 100%
+          // automático — catch-up no lançador + execução na subida do
+          // processo. A linha vira gasto real sozinha no dia.
+          row.projetado ? null : (
             <>
               <AcaoBtn onClick={() => setModalEditar(row)}>Editar</AcaoBtn>
               <AcaoBtn $perigo onClick={() => setModalExcluir(row)}>Excluir</AcaoBtn>
@@ -378,6 +360,13 @@ function ModalEditarLancamento({ tipo, item, onFechar, onSalvo, onErro }) {
   const [descricao, setDescricao] = useState(item.descricao || "");
   const [categoriaId, setCategoriaId] = useState(item.categoria_id);
   const [formaId, setFormaId] = useState(item.forma_pagamento_id);
+  // Recorrência (entradas): inicia do estado ATUAL do modelo
+  // (recorrente_ativa vem do LEFT JOIN com entradas_fixas — entrada_fixa_id
+  // sozinho ficaria marcado pra sempre mesmo depois de desativar).
+  const [recorrente, setRecorrente] = useState(!!item.recorrente_ativa);
+  const [diaLancamento, setDiaLancamento] = useState(
+    item.recorrente_dia || (item.data ? new Date(item.data).getDate() : new Date().getDate())
+  );
   const [erro, setErro] = useState("");
   const [enviando, setEnviando] = useState(false);
 
@@ -391,7 +380,14 @@ function ModalEditarLancamento({ tipo, item, onFechar, onSalvo, onErro }) {
     setEnviando(true);
     try {
       if (tipo === "entradas") {
-        await api.put(`/entradas/${item.id}`, { valor, descricao });
+        await api.put(`/entradas/${item.id}`, {
+          valor, descricao,
+          // Só envia se mudou algo de recorrência — evita mexer no modelo
+          // quando a pessoa só corrigiu o valor de uma entrada avulsa.
+          ...(recorrente !== !!item.recorrente_ativa || (recorrente && diaLancamento !== item.recorrente_dia)
+            ? { recorrente, dia_lancamento: diaLancamento }
+            : {}),
+        });
       } else {
         await api.put(`/gastos/${item.id}`, {
           valor, descricao, categoria_id: categoriaId, forma_pagamento_id: formaId,
@@ -416,6 +412,31 @@ function ModalEditarLancamento({ tipo, item, onFechar, onSalvo, onErro }) {
           <label htmlFor="descricao-edit">Descrição</label>
           <input id="descricao-edit" value={descricao} onChange={(e) => setDescricao(e.target.value)} />
         </Field>
+        {tipo === "entradas" && (
+          <>
+            <Field>
+              <label>
+                <input type="checkbox" checked={recorrente} onChange={(e) => setRecorrente(e.target.checked)} />
+                {" "}Recorrente/Fixo (cai todo mês — ex: salário)
+              </label>
+              {!!item.recorrente_ativa && !recorrente && (
+                <small style={{ opacity: 0.7 }}>
+                  Desmarcar para de lançar nos próximos meses — as entradas já
+                  lançadas não são apagadas.
+                </small>
+              )}
+            </Field>
+            {recorrente && (
+              <Field>
+                <label htmlFor="dia-entrada-edit">Dia do mês em que cai</label>
+                <input
+                  id="dia-entrada-edit" type="number" min={1} max={31}
+                  value={diaLancamento} onChange={(e) => setDiaLancamento(Number(e.target.value))}
+                />
+              </Field>
+            )}
+          </>
+        )}
         {tipo === "gastos" && (
           <>
             <Field>

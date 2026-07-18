@@ -12,7 +12,7 @@ from services.entradas import (
     atualizar_entrada,
     remover_entrada,
 )
-from services.entradas_fixas import criar_entrada_fixa
+from services.entradas_fixas import criar_entrada_fixa, definir_recorrencia_entrada
 
 bp = Blueprint("entradas", __name__, url_prefix="/api/entradas")
 
@@ -65,6 +65,22 @@ def criar():
 def atualizar(entrada_id):
     dados = request.get_json(silent=True) or {}
     entrada = atualizar_entrada(g.usuario_id, entrada_id, valor=dados.get("valor"), descricao=dados.get("descricao"))
+
+    # `recorrente` presente no body: liga/desliga a recorrência a partir
+    # desta entrada (pedido 18/07/2026 — o flag só existia no criar).
+    # Ordem importa: atualizar valor/descricao ANTES, porque ligar a
+    # recorrência sincroniza o modelo com os valores atuais da entrada.
+    if "recorrente" in dados:
+        resultado = definir_recorrencia_entrada(
+            g.usuario_id, entrada_id, bool(dados["recorrente"]),
+            dia_lancamento=dados.get("dia_lancamento"),
+        )
+        if resultado:
+            return resultado
+        if not entrada:
+            raise AppError("Entrada não encontrada.", 404, "nao_encontrado")
+        return entrada
+
     if not entrada:
         raise AppError("Entrada não encontrada (ou nenhum campo pra atualizar).", 404, "nao_encontrado")
     return entrada

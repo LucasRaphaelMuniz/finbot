@@ -9,7 +9,6 @@ from services.despesas_fixas import (
     criar_despesa_fixa,
     atualizar_despesa_fixa,
     desativar_despesa_fixa_por_id,
-    confirmar_lancamento_fixa,
 )
 
 bp = Blueprint("fixas", __name__, url_prefix="/api/fixas")
@@ -35,6 +34,7 @@ def criar():
     fixa = criar_despesa_fixa(
         g.usuario_id, dados["descricao"], float(dados["valor"]), int(dados["dia_lancamento"]),
         categoria_id=dados.get("categoria_id"), forma_pagamento_id=dados.get("forma_pagamento_id"),
+        parcelas_total=dados.get("parcelas_total"),
     )
     return fixa, 201
 
@@ -49,6 +49,7 @@ def atualizar(fixa_id):
         descricao=dados.get("descricao"), valor=dados.get("valor"),
         dia_lancamento=dados.get("dia_lancamento"), categoria_id=dados.get("categoria_id"),
         forma_pagamento_id=dados.get("forma_pagamento_id"),
+        parcelas_total=dados.get("parcelas_total"),
         aplicar_a_partir=dados.get("aplicar_a_partir", "imediato"),
     )
     if not fixa:
@@ -56,24 +57,12 @@ def atualizar(fixa_id):
     return fixa
 
 
-@bp.route("/<int:fixa_id>/confirmar", methods=["POST"])
-@ensure_authenticated
-@requer_grupo
-def confirmar(fixa_id):
-    # Botão "Confirmar" nas linhas "previsto" de Lançamentos — ver docstring
-    # de confirmar_lancamento_fixa pro porquê disso existir (catch-up manual
-    # quando o cron não roda há um tempo).
-    dados = request.get_json(silent=True) or {}
-    competencia = dados.get("competencia")
-    if not competencia:
-        raise AppError("competencia (\"YYYY-MM\") é obrigatória.", 400, "campos_obrigatorios")
-    gasto = confirmar_lancamento_fixa(g.usuario_id, fixa_id, competencia)
-    if not gasto:
-        raise AppError(
-            "Não encontrada, já lançada nessa competência, ou não pertence ao seu grupo.",
-            404, "nao_encontrado",
-        )
-    return gasto, 201
+# NOTA: o endpoint POST /:id/confirmar (botão "Confirmar" das linhas
+# "previsto") foi REMOVIDO em 18/07/2026 a pedido do Lucas — custo fixo não
+# pode exigir ritual manual. O gap que ele cobria (lançador só rodava no
+# dia exato) foi resolvido na raiz: catch-up automático em
+# lancar_despesas_fixas_do_mes (>= em vez de ==) + execução na subida do
+# processo (app.py).
 
 
 @bp.route("/<int:fixa_id>", methods=["DELETE"])

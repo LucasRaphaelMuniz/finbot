@@ -10,6 +10,7 @@ const ITENS = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/lancamentos", label: "Lançamentos" },
   { href: "/fixas", label: "Despesas fixas" },
+  { href: "/parcelas", label: "Parcelas futuras" },
   { href: "/importacao", label: "Importação" },
   { href: "/grupo", label: "Grupo" },
   { href: "/formas", label: "Formas de pagamento" },

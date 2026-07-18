@@ -10,7 +10,7 @@ from datetime import date
 
 from db import get_conn, _get_grupo_id, registrar_gasto
 from services.categorias import categoria_pertence_ao_usuario
-from services.competencia import calcular_competencia
+from services.competencia import calcular_competencia, somar_meses
 from services.despesas_fixas import _dia_efetivo
 from services.parcelamento import criar_compra_parcelada
 from utils.app_error import AppError
@@ -129,7 +129,11 @@ def projetar_despesas_fixas(conn, gid: int | None, usuario_id: int, mes: str) ->
         if gid:
             cur.execute(
                 """SELECT df.*, c.nome AS categoria_nome, fp.nome AS forma_nome,
-                          fp.dia_fechamento, fp.dia_vencimento, u.nome AS membro_nome
+                          fp.dia_fechamento, fp.dia_vencimento, u.nome AS membro_nome,
+                          (SELECT COUNT(*) FROM gastos g WHERE g.despesa_fixa_id = df.id)
+                              AS lancadas,
+                          (SELECT MAX(g.competencia) FROM gastos g WHERE g.despesa_fixa_id = df.id)
+                              AS ultima_lancada
                    FROM despesas_fixas df
                    LEFT JOIN categorias c        ON c.id  = df.categoria_id
                    LEFT JOIN formas_pagamento fp ON fp.id = df.forma_pagamento_id
@@ -140,7 +144,11 @@ def projetar_despesas_fixas(conn, gid: int | None, usuario_id: int, mes: str) ->
         else:
             cur.execute(
                 """SELECT df.*, c.nome AS categoria_nome, fp.nome AS forma_nome,
-                          fp.dia_fechamento, fp.dia_vencimento, u.nome AS membro_nome
+                          fp.dia_fechamento, fp.dia_vencimento, u.nome AS membro_nome,
+                          (SELECT COUNT(*) FROM gastos g WHERE g.despesa_fixa_id = df.id)
+                              AS lancadas,
+                          (SELECT MAX(g.competencia) FROM gastos g WHERE g.despesa_fixa_id = df.id)
+                              AS ultima_lancada
                    FROM despesas_fixas df
                    LEFT JOIN categorias c        ON c.id  = df.categoria_id
                    LEFT JOIN formas_pagamento fp ON fp.id = df.forma_pagamento_id
@@ -153,10 +161,29 @@ def projetar_despesas_fixas(conn, gid: int | None, usuario_id: int, mes: str) ->
     def _mes_anterior(ano: int, mes_num: int) -> tuple[int, int]:
         return (ano - 1, 12) if mes_num == 1 else (ano, mes_num - 1)
 
+    hoje_mes = hoje.replace(day=1)
+    meses_a_frente = (competencia_alvo.year - hoje_mes.year) * 12 + (competencia_alvo.month - hoje_mes.month)
+
     projetados = []
     for fixa in fixas:
         if fixa["id"] in ja_lancadas:
             continue  # já lançada de verdade nesse mês — não duplica
+
+        # Fixa com prazo (parcelas_total, migração 025): não projeta além do
+        # fim — financiamento com 2 parcelas restantes não pode aparecer 6
+        # meses à frente. As parcelas restantes ocupam os meses consecutivos
+        # após a última competência lançada (ou a partir de hoje, se nunca
+        # lançou).
+        if fixa.get("parcelas_total"):
+            restantes = fixa["parcelas_total"] - fixa["lancadas"]
+            if restantes <= 0:
+                continue
+            if fixa.get("ultima_lancada"):
+                fim = somar_meses(fixa["ultima_lancada"].replace(day=1), restantes)
+                if competencia_alvo > fim:
+                    continue
+            elif meses_a_frente >= fixa["parcelas_total"]:
+                continue
 
         candidatos = [(ano, mes_num)]
         candidatos.append(_mes_anterior(ano, mes_num))

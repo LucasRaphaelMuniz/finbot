@@ -32,23 +32,33 @@ def registrar_entrada(usuario_id: int, valor: float, descricao: str = "",
 
 
 def get_entradas_mes(usuario_id: int) -> list[dict]:
+    # LEFT JOIN entradas_fixas pra devolver recorrente_ativa — a tela de
+    # editar precisa saber se a recorrência está LIGADA agora, não só se a
+    # entrada nasceu de um modelo (entrada_fixa_id fica pra sempre, mesmo
+    # depois de desativar; usar só ele deixaria o checkbox marcado errado).
     with get_conn() as conn:
         gid = _get_grupo_id(conn, usuario_id)
         with conn.cursor() as cur:
             if gid:
                 cur.execute(
-                    """SELECT * FROM entradas
-                       WHERE grupo_id = %s
-                         AND DATE_TRUNC('month', data) = DATE_TRUNC('month', NOW())
-                       ORDER BY data DESC""",
+                    """SELECT e.*, COALESCE(ef.ativa, FALSE) AS recorrente_ativa,
+                              ef.dia_lancamento AS recorrente_dia
+                       FROM entradas e
+                       LEFT JOIN entradas_fixas ef ON ef.id = e.entrada_fixa_id
+                       WHERE e.grupo_id = %s
+                         AND DATE_TRUNC('month', e.data) = DATE_TRUNC('month', NOW())
+                       ORDER BY e.data DESC""",
                     (gid,),
                 )
             else:
                 cur.execute(
-                    """SELECT * FROM entradas
-                       WHERE usuario_id = %s AND grupo_id IS NULL
-                         AND DATE_TRUNC('month', data) = DATE_TRUNC('month', NOW())
-                       ORDER BY data DESC""",
+                    """SELECT e.*, COALESCE(ef.ativa, FALSE) AS recorrente_ativa,
+                              ef.dia_lancamento AS recorrente_dia
+                       FROM entradas e
+                       LEFT JOIN entradas_fixas ef ON ef.id = e.entrada_fixa_id
+                       WHERE e.usuario_id = %s AND e.grupo_id IS NULL
+                         AND DATE_TRUNC('month', e.data) = DATE_TRUNC('month', NOW())
+                       ORDER BY e.data DESC""",
                     (usuario_id,),
                 )
             return [dict(r) for r in cur.fetchall()]

@@ -8,7 +8,7 @@ from services.gastos import (
     listar_gastos, criar_gasto, criar_gasto_parcelado, atualizar_gasto,
     remover_gasto, obter_gasto,
 )
-from services.parcelamento import excluir_compra_parcelada
+from services.parcelamento import excluir_compra_parcelada, listar_parcelamentos_em_andamento
 from db import get_formas_pagamento
 
 bp = Blueprint("gastos", __name__, url_prefix="/api/gastos")
@@ -26,6 +26,15 @@ def listar():
         page=request.args.get("page", default=1, type=int),
         per_page=request.args.get("per_page", default=50, type=int),
     )
+
+
+@bp.route("/parcelamentos", methods=["GET"])
+@ensure_authenticated
+@requer_grupo
+def parcelamentos():
+    """Compras parceladas com parcela a vencer — aba "Parcelas" da web
+    (quantas faltam, valor restante, próxima/última competência)."""
+    return {"itens": listar_parcelamentos_em_andamento(g.usuario_id)}
 
 
 @bp.route("", methods=["POST"])

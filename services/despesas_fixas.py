@@ -37,37 +37,49 @@ from services.competencia import calcular_competencia
 
 
 def get_despesas_fixas(usuario_id: int, apenas_ativas: bool = True) -> list[dict]:
+    # `lancadas` (subquery em gastos) alimenta o "12/48" das fixas com
+    # prazo (parcelas_total, migração 025) na tela de Despesas fixas.
     with get_conn() as conn:
         gid = _get_grupo_id(conn, usuario_id)
         with conn.cursor() as cur:
             filtro_ativa = "AND ativa = TRUE" if apenas_ativas else ""
             if gid:
                 cur.execute(
-                    f"SELECT * FROM despesas_fixas WHERE grupo_id = %s {filtro_ativa} "
-                    "ORDER BY dia_lancamento, descricao",
+                    f"""SELECT f.*,
+                               (SELECT COUNT(*) FROM gastos g WHERE g.despesa_fixa_id = f.id)
+                                   AS lancadas
+                        FROM despesas_fixas f WHERE grupo_id = %s {filtro_ativa}
+                        ORDER BY dia_lancamento, descricao""",
                     (gid,),
                 )
             else:
                 cur.execute(
-                    f"SELECT * FROM despesas_fixas WHERE usuario_id = %s AND grupo_id IS NULL "
-                    f"{filtro_ativa} ORDER BY dia_lancamento, descricao",
+                    f"""SELECT f.*,
+                               (SELECT COUNT(*) FROM gastos g WHERE g.despesa_fixa_id = f.id)
+                                   AS lancadas
+                        FROM despesas_fixas f WHERE usuario_id = %s AND grupo_id IS NULL
+                        {filtro_ativa} ORDER BY dia_lancamento, descricao""",
                     (usuario_id,),
                 )
             return [dict(r) for r in cur.fetchall()]
 
 
 def criar_despesa_fixa(usuario_id: int, descricao: str, valor: float, dia_lancamento: int,
-                        categoria_id: int = None, forma_pagamento_id: int = None) -> dict:
+                        categoria_id: int = None, forma_pagamento_id: int = None,
+                        parcelas_total: int = None) -> dict:
+    """parcelas_total (migração 025): fixa com prazo — financiamento,
+    consórcio. NULL = sem fim (aluguel, internet)."""
     with get_conn() as conn:
         gid = _get_grupo_id(conn, usuario_id)
         with conn.cursor() as cur:
             cur.execute(
                 """INSERT INTO despesas_fixas
                        (grupo_id, usuario_id, categoria_id, forma_pagamento_id,
-                        descricao, valor, dia_lancamento)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        descricao, valor, dia_lancamento, parcelas_total)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                    RETURNING *""",
-                (gid, usuario_id, categoria_id, forma_pagamento_id, descricao, valor, dia_lancamento),
+                (gid, usuario_id, categoria_id, forma_pagamento_id, descricao, valor,
+                 dia_lancamento, parcelas_total),
             )
             conn.commit()
             return dict(cur.fetchone())
@@ -123,94 +135,28 @@ def _valor_efetivo(fixa: dict, hoje: date) -> tuple[float, bool]:
     return (valor_pendente if usar_pendente else fixa["valor"]), usar_pendente
 
 
-def confirmar_lancamento_fixa(usuario_id: int, fixa_id: int, competencia_str: str) -> dict | None:
-    """
-    Lançamento MANUAL de uma despesa fixa pra uma competência específica —
-    botão "Confirmar" nas linhas "previsto" de Lançamentos (front). Existe
-    porque `lancar_despesas_fixas_do_mes` só lança no dia exato do mês
-    (`hoje.day == dia_efetivo`) — se o cron ficou dias/semanas sem rodar
-    (ex: nunca foi configurado no Railway, caso real do Lucas em 16/07/2026),
-    não tem catch-up automático pros dias que já passaram; a pessoa fica
-    vendo "previsto" pra sempre até confirmar na mão. Reaproveita a mesma
-    checagem de idempotência (índice único uq_despesa_fixa_mes) e a mesma
-    regra de valor_pendente que o cron usa (`_valor_efetivo`), pra não ter
-    duas fontes de verdade pro "quanto lançar".
-
-    `data` do gasto criado é hoje (quando a pessoa efetivamente confirmou),
-    não o dia_lancamento original — a competência (o mês que ele conta pro
-    orçamento) é a que foi pedida, essas duas coisas são independentes desde
-    sempre no resto do sistema (ver services/competencia.py).
-    """
-    with get_conn() as conn:
-        gid = _get_grupo_id(conn, usuario_id)
-        with conn.cursor() as cur:
-            if gid:
-                cur.execute(
-                    """SELECT f.*, fp.dia_fechamento, fp.dia_vencimento
-                       FROM despesas_fixas f
-                       LEFT JOIN formas_pagamento fp ON fp.id = f.forma_pagamento_id
-                       WHERE f.id = %s AND f.grupo_id = %s AND f.ativa = TRUE""",
-                    (fixa_id, gid),
-                )
-            else:
-                cur.execute(
-                    """SELECT f.*, fp.dia_fechamento, fp.dia_vencimento
-                       FROM despesas_fixas f
-                       LEFT JOIN formas_pagamento fp ON fp.id = f.forma_pagamento_id
-                       WHERE f.id = %s AND f.usuario_id = %s AND f.grupo_id IS NULL AND f.ativa = TRUE""",
-                    (fixa_id, usuario_id),
-                )
-            fixa = cur.fetchone()
-            if not fixa:
-                return None
-            fixa = dict(fixa)
-
-            competencia = date(*(int(p) for p in competencia_str.split("-")[:2]), 1)
-            hoje = date.today()
-            valor_lancado, usar_pendente = _valor_efetivo(fixa, hoje)
-
-            cur.execute(
-                """SELECT 1 FROM gastos
-                   WHERE despesa_fixa_id = %s
-                     AND DATE_TRUNC('month', competencia) = DATE_TRUNC('month', %s::date)""",
-                (fixa_id, competencia),
-            )
-            if cur.fetchone():
-                return None  # já foi lançada (por confirmação anterior ou pelo cron) — nada a fazer
-
-            try:
-                cur.execute(
-                    """INSERT INTO gastos
-                           (usuario_id, forma_pagamento_id, categoria_id, valor, descricao,
-                            grupo_id, competencia, despesa_fixa_id, data)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                       RETURNING *""",
-                    (fixa["usuario_id"], fixa["forma_pagamento_id"], fixa["categoria_id"],
-                     valor_lancado, fixa["descricao"], fixa["grupo_id"], competencia, fixa_id, hoje),
-                )
-                gasto = dict(cur.fetchone())
-                if usar_pendente:
-                    cur.execute(
-                        "UPDATE despesas_fixas SET valor = %s, valor_pendente = NULL, "
-                        "valor_pendente_a_partir = NULL WHERE id = %s",
-                        (fixa["valor_pendente"], fixa_id),
-                    )
-                conn.commit()
-                return gasto
-            except psycopg.errors.UniqueViolation:
-                conn.rollback()
-                return None
-
-
 def lancar_despesas_fixas_do_mes(hoje: date = None) -> list[dict]:
     """
     Lança como gasto normal toda despesa fixa ativa cujo dia efetivo de
-    lançamento é hoje, e que ainda não foi lançada nessa competência.
+    lançamento JÁ CHEGOU neste mês (hoje.day >= dia_efetivo) e que ainda
+    não foi lançada nessa competência.
 
-    Idempotente: chamar de novo no mesmo dia não duplica — checagem prévia
-    (SELECT) mais o índice único uq_despesa_fixa_mes como segunda camada de
-    proteção contra corrida (2 execuções do cron sobrepostas, por exemplo).
-    Pensada pra rodar 1x/dia via cron (jobs/lancar_fixas.py, decisão D4).
+    CATCH-UP (18/07/2026, pedido do Lucas: "não quero confirmar custos
+    fixos — se são fixos, serão fixos TODOS os meses"): antes a condição
+    era dia EXATO (hoje.day == dia_efetivo) — se o processo estivesse fora
+    do ar naquele dia, a fixa ficava "previsto" pra sempre esperando o
+    botão Confirmar (que existia como muleta pra esse gap e foi removido
+    junto com esta mudança). Com >=, qualquer execução posterior no mês
+    lança o que ficou pra trás; a idempotência (checagem prévia + índice
+    único uq_despesa_fixa_mes) já impedia duplicar, então o catch-up sai de
+    graça. O lançador também roda na subida do processo (app.py), não só às
+    6h — deploy no meio do dia não atrasa lançamento.
+
+    Fixa com prazo (parcelas_total, migração 025 — "financiamento da casa é
+    custo fixo mas acaba"): após lançar, se o total de gastos da fixa
+    atingiu parcelas_total, desativa sozinha (ativa = FALSE). A contagem sai
+    de `gastos` — parcela excluída manualmente reabre a vaga, o que é o
+    comportamento esperado (o que vale é o que foi lançado de fato).
     """
     hoje = hoje or date.today()
     lancados = []
@@ -224,7 +170,9 @@ def lancar_despesas_fixas_do_mes(hoje: date = None) -> list[dict]:
             # dia_fechamento NULL — calcular_competencia trata isso como
             # "sem cartão", mesma regra de compra avulsa.
             cur.execute(
-                """SELECT f.*, fp.dia_fechamento, fp.dia_vencimento
+                """SELECT f.*, fp.dia_fechamento, fp.dia_vencimento,
+                          (SELECT COUNT(*) FROM gastos g WHERE g.despesa_fixa_id = f.id)
+                              AS lancadas
                    FROM despesas_fixas f
                    LEFT JOIN formas_pagamento fp ON fp.id = f.forma_pagamento_id
                    WHERE f.ativa = TRUE"""
@@ -233,10 +181,24 @@ def lancar_despesas_fixas_do_mes(hoje: date = None) -> list[dict]:
 
         for fixa in fixas:
             dia_efetivo = _dia_efetivo(fixa["dia_lancamento"], hoje.year, hoje.month)
-            if hoje.day != dia_efetivo:
+            if hoje.day < dia_efetivo:
+                continue  # ainda não chegou o dia neste mês
+
+            # Prazo já cumprido (fixa parcelada tipo financiamento) — não
+            # lança mais e garante a desativação (cinto e suspensório: o
+            # normal é já ter sido desativada no lançamento da última).
+            if fixa.get("parcelas_total") and fixa["lancadas"] >= fixa["parcelas_total"]:
+                with conn.cursor() as cur:
+                    cur.execute("UPDATE despesas_fixas SET ativa = FALSE WHERE id = %s", (fixa["id"],))
+                    conn.commit()
                 continue
 
-            competencia = calcular_competencia(hoje, fixa.get("dia_fechamento"))
+            # Competência calculada a partir do DIA DEVIDO, não do dia em
+            # que o catch-up rodou — lançar dia 20 uma fixa do dia 5 num
+            # cartão que fecha dia 10 tem que cair na fatura que fecharia
+            # pro dia 5, senão o atraso do processo mudaria a fatura.
+            data_devida = date(hoje.year, hoje.month, dia_efetivo)
+            competencia = calcular_competencia(data_devida, fixa.get("dia_fechamento"))
             valor_lancado, usar_pendente = _valor_efetivo(fixa, hoje)
 
             with conn.cursor() as cur:
@@ -266,6 +228,11 @@ def lancar_despesas_fixas_do_mes(hoje: date = None) -> list[dict]:
                             "valor_pendente_a_partir = NULL WHERE id = %s",
                             (valor_lancado, fixa["id"]),
                         )
+                    # Última parcela do prazo? Desativa na hora.
+                    if fixa.get("parcelas_total") and fixa["lancadas"] + 1 >= fixa["parcelas_total"]:
+                        cur.execute(
+                            "UPDATE despesas_fixas SET ativa = FALSE WHERE id = %s", (fixa["id"],)
+                        )
                     conn.commit()
                     lancados.append(gasto)
                 except psycopg.errors.UniqueViolation:
@@ -285,6 +252,7 @@ def lancar_despesas_fixas_do_mes(hoje: date = None) -> list[dict]:
 def atualizar_despesa_fixa(usuario_id: int, fixa_id: int, descricao: str = None,
                             valor: float = None, dia_lancamento: int = None,
                             categoria_id: int = None, forma_pagamento_id: int = None,
+                            parcelas_total: int = None,
                             aplicar_a_partir: str = "imediato") -> dict | None:
     """
     `aplicar_a_partir` só importa quando `valor` está sendo alterado
@@ -307,6 +275,7 @@ def atualizar_despesa_fixa(usuario_id: int, fixa_id: int, descricao: str = None,
         for campo, valor_campo in (
             ("descricao", descricao), ("dia_lancamento", dia_lancamento),
             ("categoria_id", categoria_id), ("forma_pagamento_id", forma_pagamento_id),
+            ("parcelas_total", parcelas_total),
         ):
             if valor_campo is not None:
                 sets.append(f"{campo} = %s")
