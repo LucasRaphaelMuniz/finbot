@@ -8,6 +8,7 @@ import { Nav, Logo, ItemLink, Overlay } from "./styles";
 
 const ITENS = [
   { href: "/dashboard", label: "Dashboard" },
+  { href: "/contas", label: "Contas do mês" },
   { href: "/lancamentos", label: "Lançamentos" },
   { href: "/fixas", label: "Despesas fixas" },
   { href: "/parcelas", label: "Parcelas futuras" },

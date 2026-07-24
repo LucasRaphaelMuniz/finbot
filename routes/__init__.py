@@ -4,7 +4,7 @@ routes/__init__.py — agrega e registra todos os Blueprints da API web
 nenhuma lógica de negócio aqui, só a lista de módulos.
 """
 
-from routes import onboarding, convites, gastos, entradas, fixas, categorias, formas, grupo, resumo, importacao, planos, conta, verificacao
+from routes import onboarding, convites, gastos, entradas, fixas, categorias, formas, grupo, resumo, importacao, planos, conta, verificacao, contas
 
 _BLUEPRINTS = [
     onboarding.bp,
@@ -12,6 +12,7 @@ _BLUEPRINTS = [
     gastos.bp,
     entradas.bp,
     fixas.bp,
+    contas.bp,
     categorias.bp,
     formas.bp,
     grupo.bp,

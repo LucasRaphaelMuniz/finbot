@@ -8,6 +8,7 @@ concentrada, em vez de espalhar SUM/GROUP BY em múltiplas chamadas do front.
 from datetime import date
 
 from db import get_conn, _get_grupo_id, get_saldo_todas_formas
+from services.contas_mes import totais_contas_mes
 from services.entradas import get_total_entradas_competencia
 from services.entradas_fixas import total_entradas_fixas_previstas
 from services.gastos import projetar_despesas_fixas
@@ -149,6 +150,22 @@ def resumo_mensal(usuario_id: int, mes: str = None) -> dict:
     ]
     pct_limite_medio = sum(percentuais) / len(percentuais) if percentuais else None
 
+    # Contas do mês (24/07/2026) — quanto das contas a pagar do mês já foi
+    # confirmado como pago no board (services/contas_mes.py).
+    #
+    # Vem de totais_contas_mes, que remonta as MESMAS linhas do board, em vez
+    # de duas queries próprias aqui: somar "o que falta pagar" de um jeito
+    # diferente do que a tela mostra é como o StatCard e o board acabariam
+    # exibindo números diferentes pro mesmo mês. Custa algumas queries a mais
+    # neste endpoint — trade-off aceito conscientemente em favor de não ter
+    # duas definições da mesma soma.
+    #
+    # NÃO é o mesmo conjunto do bloco `caixa` abaixo: `caixa` conta TUDO que
+    # sai no mês (inclusive compra avulsa no débito/pix), o board conta só o
+    # que exige uma ação de pagamento (fixas em boleto + faturas). Por isso
+    # é uma chave nova, e não um campo dentro de `caixa`.
+    contas = totais_contas_mes(usuario_id, competencia[:7])
+
     return {
         "mes": competencia[:7],
         # Controle: tudo que foi COMPRADO na competência (inclui cartão na
@@ -179,6 +196,9 @@ def resumo_mensal(usuario_id: int, mes: str = None) -> dict:
             "saida_total": gastos_nao_cartao + fatura_a_pagar,
             "saldo_caixa": total_entradas - gastos_nao_cartao - fatura_a_pagar,
         },
+        # Board de contas do mês: {entradas, a_pagar, pago, saidas, sobra}.
+        # `a_pagar` é o número acionável — o que ainda falta confirmar.
+        "contas": contas,
         "pct_limite_medio": pct_limite_medio,
         "por_categoria": por_categoria,
         "fixo_variavel": fixo_variavel,

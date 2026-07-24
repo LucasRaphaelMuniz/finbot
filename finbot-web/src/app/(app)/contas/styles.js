@@ -1,0 +1,188 @@
+import styled from "styled-components";
+
+export const Header = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: ${({ theme }) => theme.spacing(3)};
+  margin-bottom: ${({ theme }) => theme.spacing(5)};
+`;
+
+// 3 colunas como na planilha (Entradas | Não pagos | Pagos). Mesmo truque de
+// minmax(min(...), 100%) do dashboard: no celular vira 1 coluna sozinho, sem
+// media query, e nunca estoura a largura da tela.
+export const Board = styled.div`
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
+  gap: ${({ theme }) => theme.spacing(4)};
+  align-items: start;
+`;
+
+export const Coluna = styled.section`
+  background: ${({ theme }) => theme.colors.surface};
+  border: 1px solid ${({ theme }) => theme.colors.border};
+  border-radius: ${({ theme }) => theme.radius.lg};
+  padding: ${({ theme }) => theme.spacing(4)};
+  min-height: 160px;
+  transition: border-color 120ms, background 120ms;
+
+  /* Realce durante o arraste — só na coluna que aceita o card sendo
+     arrastado (o pai controla via $alvo), pra não piscar a tela toda. */
+  ${({ $alvo, theme }) =>
+    $alvo &&
+    `
+      border-color: ${theme.colors.primary};
+      background: ${theme.colors.surfaceAlt};
+    `}
+`;
+
+export const ColunaHeader = styled.header`
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: ${({ theme }) => theme.spacing(2)};
+  padding-bottom: ${({ theme }) => theme.spacing(3)};
+  margin-bottom: ${({ theme }) => theme.spacing(3)};
+  border-bottom: 1px solid ${({ theme }) => theme.colors.border};
+`;
+
+export const ColunaTitulo = styled.h2`
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: ${({ theme }) => theme.colors.textMuted};
+`;
+
+export const ColunaTotal = styled.span`
+  font-size: 15px;
+  font-weight: 600;
+  color: ${({ theme, $tom }) =>
+    $tom === "sucesso" ? theme.colors.success
+      : $tom === "erro" ? theme.colors.danger
+      : theme.colors.text};
+`;
+
+export const Card = styled.article`
+  display: flex;
+  align-items: center;
+  gap: ${({ theme }) => theme.spacing(3)};
+  background: ${({ theme }) => theme.colors.surfaceAlt};
+  border: 1px solid ${({ theme }) => theme.colors.border};
+  border-left: 3px solid
+    ${({ theme, $origem }) =>
+      $origem === "fatura" ? theme.colors.warning
+        : $origem === "previsto" ? theme.colors.border
+        : theme.colors.primary};
+  border-radius: ${({ theme }) => theme.radius.md};
+  padding: ${({ theme }) => theme.spacing(3)};
+  margin-bottom: ${({ theme }) => theme.spacing(2)};
+  cursor: ${({ $arrastavel }) => ($arrastavel ? "grab" : "default")};
+  opacity: ${({ $arrastando, $origem }) =>
+    $arrastando ? 0.4 : $origem === "previsto" ? 0.65 : 1};
+
+  &:active {
+    cursor: ${({ $arrastavel }) => ($arrastavel ? "grabbing" : "default")};
+  }
+`;
+
+export const CardInfo = styled.div`
+  flex: 1;
+  min-width: 0;
+`;
+
+export const CardTitulo = styled.div`
+  font-size: 14px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+`;
+
+export const CardDetalhe = styled.div`
+  font-size: 12px;
+  color: ${({ theme }) => theme.colors.textMuted};
+  margin-top: 2px;
+`;
+
+export const CardValor = styled.button`
+  background: none;
+  border: 1px dashed transparent;
+  border-radius: ${({ theme }) => theme.radius.sm};
+  padding: 2px 6px;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: inherit;
+  color: ${({ theme }) => theme.colors.text};
+  cursor: ${({ $editavel }) => ($editavel ? "text" : "default")};
+  text-align: right;
+  white-space: nowrap;
+
+  &:hover {
+    border-color: ${({ theme, $editavel }) =>
+      $editavel ? theme.colors.border : "transparent"};
+  }
+`;
+
+export const ValorRiscado = styled.span`
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  text-decoration: line-through;
+  color: ${({ theme }) => theme.colors.textMuted};
+`;
+
+// Botão que faz o mesmo que arrastar. Não é fallback de acessibilidade
+// jogado num canto: drag nativo do HTML5 não dispara em toque, então no
+// celular ELE é o único caminho — e o app tem menu gaveta mobile, logo é
+// usado no celular de verdade.
+export const BotaoMover = styled.button`
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: ${({ theme }) => theme.radius.sm};
+  border: 1px solid ${({ theme }) => theme.colors.border};
+  background: ${({ theme }) => theme.colors.surface};
+  color: ${({ theme, $pago }) =>
+    $pago ? theme.colors.success : theme.colors.textMuted};
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    border-color: ${({ theme }) => theme.colors.primary};
+    color: ${({ theme }) => theme.colors.primary};
+  }
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+`;
+
+export const InputValor = styled.input`
+  width: 110px;
+  padding: 4px 6px;
+  font-size: 14px;
+  font-family: inherit;
+  text-align: right;
+  color: ${({ theme }) => theme.colors.text};
+  background: ${({ theme }) => theme.colors.bg};
+  border: 1px solid ${({ theme }) => theme.colors.primary};
+  border-radius: ${({ theme }) => theme.radius.sm};
+`;
+
+export const Vazio = styled.p`
+  font-size: 13px;
+  color: ${({ theme }) => theme.colors.textMuted};
+  text-align: center;
+  padding: ${({ theme }) => theme.spacing(6)} 0;
+`;
+
+export const Resumo = styled.div`
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+  gap: ${({ theme }) => theme.spacing(4)};
+  margin-bottom: ${({ theme }) => theme.spacing(5)};
+`;

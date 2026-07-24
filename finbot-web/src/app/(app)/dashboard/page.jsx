@@ -82,6 +82,18 @@ export default function DashboardPage() {
                 tom="erro"
               />
             )}
+            {/* Contas do mês (24/07/2026): o número acionável do board em
+                /contas — o que ainda falta confirmar como pago. Só aparece
+                quando há conta a pagar ou já paga no mês; num mês sem
+                nenhuma das duas o card não diria nada. */}
+            {(dados.contas?.a_pagar > 0 || dados.contas?.pago > 0) && (
+              <StatCard
+                label="Contas a pagar"
+                valor={brl(dados.contas.a_pagar)}
+                detalhe={`${brl(dados.contas.pago)} já confirmado como pago`}
+                tom={dados.contas.a_pagar > 0 ? "erro" : "sucesso"}
+              />
+            )}
             <StatCard
               label="% médio dos limites usados"
               valor={dados.pct_limite_medio != null ? `${dados.pct_limite_medio.toFixed(0)}%` : "—"}
