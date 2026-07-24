@@ -222,7 +222,12 @@ function ModalNovoLancamento({ aberto, onFechar, onSalvo, onErro }) {
   const [formaId, setFormaId] = useState(null);
   const [parcelado, setParcelado] = useState(false);
   const [parcelas, setParcelas] = useState(2);
-  const [recorrente, setRecorrente] = useState(false);
+  // Pedido do Lucas (24/07/2026): as entradas dele são quase todas fixas
+  // (salário, VA/VR) — vinha esquecendo de marcar o checkbox e a entrada
+  // ficava avulsa, sumindo do board de /contas no mês seguinte. Só troca o
+  // DEFAULT do checkbox pra marcado; continua editável por linha (bônus,
+  // 13º e outras entradas de uma vez só desmarcam antes de salvar).
+  const [recorrente, setRecorrente] = useState(true);
   const [diaLancamento, setDiaLancamento] = useState(new Date().getDate());
   const [erro, setErro] = useState("");
   const [enviando, setEnviando] = useState(false);
@@ -235,7 +240,7 @@ function ModalNovoLancamento({ aberto, onFechar, onSalvo, onErro }) {
     setFormaId(null);
     setParcelado(false);
     setParcelas(2);
-    setRecorrente(false);
+    setRecorrente(true);
     setDiaLancamento(new Date().getDate());
     setErro("");
   }

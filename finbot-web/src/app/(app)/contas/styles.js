@@ -108,7 +108,8 @@ export const CardDetalhe = styled.div`
 
 export const CardValor = styled.button`
   background: none;
-  border: 1px dashed transparent;
+  border: 1px dashed
+    ${({ theme, $editavel }) => ($editavel ? theme.colors.border : "transparent")};
   border-radius: ${({ theme }) => theme.radius.sm};
   padding: 2px 6px;
   font-size: 14px;
@@ -119,9 +120,13 @@ export const CardValor = styled.button`
   text-align: right;
   white-space: nowrap;
 
+  /* Borda tracejada sempre visível (não só no hover) quando editável — em
+     toque não existe hover pra revelar que o valor é clicável, e no
+     desktop também não devia depender de passar o mouse por cima pra
+     descobrir. */
   &:hover {
     border-color: ${({ theme, $editavel }) =>
-      $editavel ? theme.colors.border : "transparent"};
+      $editavel ? theme.colors.primary : "transparent"};
   }
 `;
 

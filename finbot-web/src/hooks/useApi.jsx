@@ -12,15 +12,23 @@ export function useApi(url, { skip = false } = {}) {
   const [loading, setLoading] = useState(!skip);
   const [erro, setErro] = useState(null);
 
-  const refetch = useCallback(() => {
+  // `refetch({ silent: true })` — pedido do Lucas em /contas: arrastar um
+  // card chamava refetch() puro, que liga `loading`, e a tela troca o board
+  // inteiro pelo <Loading/> a cada solta. Com silent, os dados são
+  // atualizados por baixo sem esse takeover — a tela troca só o que mudou
+  // de verdade. Default sem silent continua igual (outras telas que chamam
+  // refetch() depois de salvar um modal não precisam mudar nada).
+  const refetch = useCallback(({ silent = false } = {}) => {
     if (!url || skip) return;
-    setLoading(true);
+    if (!silent) setLoading(true);
     setErro(null);
     api
       .get(url)
       .then((res) => setDados(res.data))
       .catch((err) => setErro(err))
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!silent) setLoading(false);
+      });
   }, [url, skip]);
 
   useEffect(() => {

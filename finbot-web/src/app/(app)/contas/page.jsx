@@ -13,7 +13,7 @@
 // boleto é 1 gasto no banco, uma fatura é N gastos somados. O backend manda
 // uma `chave` opaca ("gasto:12" / "fatura:5:2026-07-01") e a tela só devolve
 // a mesma chave — nada de lógica de cartão do lado do browser.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useApi } from "@/hooks/useApi";
 import api from "@/services/api";
 import { brl, formatarDataBR, parseValorBR } from "@/utils/format";
@@ -37,6 +37,16 @@ export default function ContasPage() {
   const url = useMemo(() => `/contas?mes=${mes}`, [mes]);
   const { dados, loading, refetch } = useApi(url);
 
+  // `local` é o que a tela desenha; `dados` é a última resposta confirmada
+  // pelo servidor. Arrastar/editar mexe em `local` NA HORA (otimista) — o
+  // card já pula de coluna antes da rede responder, sem passar pelo
+  // <Loading/>. `dados` só entra de novo quando o servidor confirma (via
+  // refetch silencioso) ou quando dá erro (aí `local` volta a ser `dados`,
+  // desfazendo o palpite). Sincroniza sempre que `dados` muda de verdade —
+  // troca de mês, 1ª carga, ou a reconciliação depois de um PATCH.
+  const [local, setLocal] = useState(null);
+  useEffect(() => setLocal(dados), [dados]);
+
   const [toast, setToast] = useState(null);
   const [arrastando, setArrastando] = useState(null); // chave do card em voo
   const [colunaAlvo, setColunaAlvo] = useState(null); // "a_pagar" | "pagas"
@@ -50,14 +60,16 @@ export default function ContasPage() {
   async function mover(conta, pago) {
     if (!conta.editavel) return; // linha "previsto" não existe no banco ainda
     setSalvando(conta.chave);
+    setLocal((atual) => moverLocal(atual, conta.chave, pago));
     try {
       await api.patch(`/contas/${conta.chave}`, { pago });
-      // refetch em vez de mexer no estado local: marcar uma fatura como paga
-      // muda os 3 totais do topo, e recalcular isso no browser seria uma
-      // segunda implementação das somas que o backend já faz.
-      refetch();
+      // Silencioso: confirma com o número exato do backend (uma fatura
+      // pode ter fixas previstas somadas, que o palpite local não sabe
+      // calcular) sem acionar o <Loading/> — só troca os números.
+      refetch({ silent: true });
       avisar(pago ? "Marcado como pago." : "Devolvido para não pagos.");
     } catch (err) {
+      setLocal(dados); // desfaz o palpite: volta pro último estado confirmado
       avisar(err?.response?.data?.mensagem || "Não foi possível atualizar.", "erro");
     } finally {
       setSalvando(null);
@@ -67,11 +79,13 @@ export default function ContasPage() {
   async function salvarValor(conta, valor) {
     if (valor === null || Number(valor) === Number(conta.valor_pago ?? conta.valor)) return;
     setSalvando(conta.chave);
+    setLocal((atual) => editarValorLocal(atual, conta, valor));
     try {
       await api.patch(`/contas/${conta.chave}`, { valor });
-      refetch();
+      refetch({ silent: true });
       avisar("Valor atualizado.");
     } catch (err) {
+      setLocal(dados);
       avisar(err?.response?.data?.mensagem || "Não foi possível salvar o valor.", "erro");
     } finally {
       setSalvando(null);
@@ -90,7 +104,7 @@ export default function ContasPage() {
       setArrastando(null);
       if (!chave) return;
 
-      const conta = [...(dados?.a_pagar || []), ...(dados?.pagas || [])]
+      const conta = [...(local?.a_pagar || []), ...(local?.pagas || [])]
         .find((c) => c.chave === chave);
       if (!conta) return;
 
@@ -112,7 +126,8 @@ export default function ContasPage() {
     };
   }
 
-  const totais = dados?.totais;
+  const dadosExibidos = local;
+  const totais = dadosExibidos?.totais;
 
   return (
     <div>
@@ -127,7 +142,7 @@ export default function ContasPage() {
         <MesPicker value={mes} onChange={setMes} />
       </Header>
 
-      {loading || !dados ? (
+      {loading || !dadosExibidos ? (
         <Loading />
       ) : (
         <>
@@ -153,10 +168,10 @@ export default function ContasPage() {
                 <ColunaTitulo>Entradas</ColunaTitulo>
                 <ColunaTotal $tom="sucesso">{brl(totais.entradas)}</ColunaTotal>
               </ColunaHeader>
-              {dados.entradas.length === 0 ? (
+              {dadosExibidos.entradas.length === 0 ? (
                 <Vazio>Nenhuma entrada lançada neste mês.</Vazio>
               ) : (
-                dados.entradas.map((e) => (
+                dadosExibidos.entradas.map((e) => (
                   <Card key={e.chave} $origem="entrada">
                     <CardInfo>
                       <CardTitulo>{e.descricao}</CardTitulo>
@@ -173,10 +188,10 @@ export default function ContasPage() {
                 <ColunaTitulo>Não pagos</ColunaTitulo>
                 <ColunaTotal $tom="erro">{brl(totais.a_pagar)}</ColunaTotal>
               </ColunaHeader>
-              {dados.a_pagar.length === 0 ? (
+              {dadosExibidos.a_pagar.length === 0 ? (
                 <Vazio>Tudo pago neste mês.</Vazio>
               ) : (
-                dados.a_pagar.map((c) => (
+                dadosExibidos.a_pagar.map((c) => (
                   <CardConta
                     key={c.chave}
                     conta={c}
@@ -195,10 +210,10 @@ export default function ContasPage() {
                 <ColunaTitulo>Pagos</ColunaTitulo>
                 <ColunaTotal $tom="sucesso">{brl(totais.pago)}</ColunaTotal>
               </ColunaHeader>
-              {dados.pagas.length === 0 ? (
+              {dadosExibidos.pagas.length === 0 ? (
                 <Vazio>Arraste uma conta para cá quando pagar.</Vazio>
               ) : (
-                dados.pagas.map((c) => (
+                dadosExibidos.pagas.map((c) => (
                   <CardConta
                     key={c.chave}
                     conta={c}
@@ -218,6 +233,57 @@ export default function ContasPage() {
       <Toast mensagem={toast?.mensagem} tipo={toast?.tipo} />
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Palpite local (otimista) — move/edita ANTES do servidor confirmar, pra
+// arrastar não esperar um round-trip pra reagir. Reproduz a MESMA fórmula
+// de totais de services/contas_mes.py::listar_contas_mes (a_pagar = soma
+// dos não pagos; pago = soma de valor_pago quando existe, senão valor;
+// saidas/sobra derivados). Duplicar essa conta no front é uma concessão
+// consciente pela resposta instantânea — o refetch silencioso logo depois
+// busca o número exato do backend (que sabe de fixas previstas somadas na
+// fatura, por exemplo) e corrige qualquer diferença sem o usuário notar.
+function recalcularTotais(entradas, aPagar, pagas) {
+  const totalEntradas = entradas.reduce((s, e) => s + Number(e.valor), 0);
+  const totalAPagar = aPagar.reduce((s, c) => s + Number(c.valor), 0);
+  const totalPago = pagas.reduce(
+    (s, c) => s + Number(c.valor_pago != null ? c.valor_pago : c.valor), 0
+  );
+  return {
+    entradas: totalEntradas,
+    a_pagar: totalAPagar,
+    pago: totalPago,
+    saidas: totalAPagar + totalPago,
+    sobra: totalEntradas - (totalAPagar + totalPago),
+  };
+}
+
+function moverLocal(board, chave, pago) {
+  if (!board) return board;
+  const todas = [...board.a_pagar, ...board.pagas];
+  const conta = todas.find((c) => c.chave === chave);
+  if (!conta) return board;
+
+  const atualizada = { ...conta, pago, pago_em: pago ? new Date().toISOString() : null };
+  const aPagar = board.a_pagar.filter((c) => c.chave !== chave);
+  const pagas = board.pagas.filter((c) => c.chave !== chave);
+  (pago ? pagas : aPagar).push(atualizada);
+
+  return { ...board, a_pagar: aPagar, pagas, totais: recalcularTotais(board.entradas, aPagar, pagas) };
+}
+
+function editarValorLocal(board, conta, valor) {
+  if (!board) return board;
+  const aplica = (lista) => lista.map((c) => {
+    if (c.chave !== conta.chave) return c;
+    // Fatura: o valor exibido some de `valor_pago` quando ela está paga —
+    // editar mexe ali, nunca em `valor` (que é a soma real dos gastos).
+    return conta.tipo === "fatura" ? { ...c, valor_pago: valor } : { ...c, valor };
+  });
+  const aPagar = aplica(board.a_pagar);
+  const pagas = aplica(board.pagas);
+  return { ...board, a_pagar: aPagar, pagas, totais: recalcularTotais(board.entradas, aPagar, pagas) };
 }
 
 function CardConta({ conta, arrastando, salvando, onArrastar, onMover, onSalvarValor }) {
