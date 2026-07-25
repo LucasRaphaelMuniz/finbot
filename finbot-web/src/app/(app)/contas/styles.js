@@ -146,6 +146,7 @@ export const BotaoMover = styled.button`
   flex-shrink: 0;
   width: 30px;
   height: 30px;
+  padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;

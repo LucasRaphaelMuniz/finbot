@@ -12,6 +12,7 @@ export const Botao = styled.button`
   border-radius: ${({ theme }) => theme.radius.sm};
   width: 32px;
   height: 32px;
+  padding: 0;
   cursor: pointer;
 
   &:hover {
