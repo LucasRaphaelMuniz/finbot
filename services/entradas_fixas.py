@@ -21,6 +21,7 @@ from datetime import date
 
 import psycopg
 from db import get_conn, _get_grupo_id
+from services.competencia import somar_meses
 
 
 def _dia_efetivo(dia_lancamento: int, ano: int, mes: int) -> int:
@@ -166,14 +167,67 @@ def definir_recorrencia_entrada(usuario_id: int, entrada_id: int, recorrente: bo
             return entrada
 
 
+def _inserir_lancamento(conn, fixa: dict, ano: int, mes: int) -> dict | None:
+    """
+    INSERT de 1 entrada fixa num mês específico — usado pelos dois passes
+    do lançador. Retorna a entrada criada, ou None se aquele mês já tem
+    lançamento (ou outro worker gunicorn ganhou a corrida —
+    uq_entrada_fixa_mes, mesma dupla proteção de
+    despesas_fixas.py::_inserir_lancamento: checagem prévia +
+    try/except UniqueViolation).
+    """
+    data_devida = date(ano, mes, _dia_efetivo(fixa["dia_lancamento"], ano, mes))
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT 1 FROM entradas
+               WHERE entrada_fixa_id = %s
+                 AND DATE_TRUNC('month', data) = DATE_TRUNC('month', %s::date)""",
+            (fixa["id"], data_devida),
+        )
+        if cur.fetchone():
+            return None
+        try:
+            cur.execute(
+                """INSERT INTO entradas
+                       (usuario_id, grupo_id, descricao, valor, data, entrada_fixa_id)
+                   VALUES (%s, %s, %s, %s, %s, %s)
+                   RETURNING *""",
+                (fixa["usuario_id"], fixa["grupo_id"], fixa["descricao"],
+                 fixa["valor"], data_devida, fixa["id"]),
+            )
+            entrada = dict(cur.fetchone())
+            conn.commit()
+            return entrada
+        except psycopg.errors.UniqueViolation:
+            conn.rollback()
+            return None
+
+
 def lancar_entradas_fixas_do_mes(hoje: date = None) -> list[dict]:
     """
-    Lança como entrada normal toda entrada fixa ativa cujo dia efetivo JÁ
-    CHEGOU neste mês (catch-up, mesma regra 18/07/2026 do lançador de
-    despesas fixas: >= em vez de dia exato — processo fora do ar no dia não
-    pode segurar o salário) e que ainda não foi lançada neste mês.
-    Idempotente: checagem prévia + índice único uq_entrada_fixa_mes contra
-    corrida (mesma dupla proteção de lancar_despesas_fixas_do_mes).
+    Dois passes por entrada fixa ativa — mesma estrutura de
+    despesas_fixas.py::lancar_despesas_fixas_do_mes, adaptada (entrada não
+    tem fatura/competência de cartão, só `data`).
+
+    PASSE 1 — mês corrente: lança a entrada cujo dia efetivo JÁ CHEGOU
+    (catch-up, hoje.day >= dia_efetivo — processo fora do ar no dia não pode
+    segurar o salário) e ainda não foi lançada no mês.
+
+    PASSE 2 — LANÇAMENTO ANTECIPADO (24/07/2026, achado ao investigar por
+    que o board de /contas mostrava "Entradas: R$ 0,00" e "Sobra do mês"
+    catastroficamente negativa ao navegar pro mês seguinte): garante que a
+    entrada do MÊS SEGUINTE já exista como lançamento real, mesmo raciocínio
+    do passe 2 de despesas_fixas ("já é certeza que vou pagar" vira, do lado
+    da receita, "já é certeza que vou receber" — salário/VA recorrente não é
+    uma previsão). Sem este passe, despesas fixas do mês seguinte já
+    aparecem materializadas (graças ao passe 2 delas) mas entradas não —
+    o board via só um lado antecipado e o outro não, fazendo "Sobra do mês"
+    de um mês futuro parecer um rombo que não existe.
+
+    Idempotente nos dois passes: checagem prévia + índice único
+    uq_entrada_fixa_mes contra corrida (services/entradas_fixas
+    ::_inserir_lancamento).
     """
     hoje = hoje or date.today()
     lancadas = []
@@ -184,38 +238,17 @@ def lancar_entradas_fixas_do_mes(hoje: date = None) -> list[dict]:
             fixas = [dict(r) for r in cur.fetchall()]
 
         for fixa in fixas:
-            if hoje.day < _dia_efetivo(fixa["dia_lancamento"], hoje.year, hoje.month):
-                continue
+            # ---- Passe 1: mês corrente (dia chegou) --------------------
+            if hoje.day >= _dia_efetivo(fixa["dia_lancamento"], hoje.year, hoje.month):
+                lancada = _inserir_lancamento(conn, fixa, hoje.year, hoje.month)
+                if lancada:
+                    lancadas.append(lancada)
 
-            with conn.cursor() as cur:
-                cur.execute(
-                    """SELECT 1 FROM entradas
-                       WHERE entrada_fixa_id = %s
-                         AND DATE_TRUNC('month', data) = DATE_TRUNC('month', %s::date)""",
-                    (fixa["id"], hoje),
-                )
-                if cur.fetchone():
-                    continue  # já lançada este mês
-
-                try:
-                    # data = dia DEVIDO, não o dia em que o catch-up rodou —
-                    # o extrato deve mostrar o salário no dia em que ele cai.
-                    data_devida = date(hoje.year, hoje.month,
-                                        _dia_efetivo(fixa["dia_lancamento"], hoje.year, hoje.month))
-                    cur.execute(
-                        """INSERT INTO entradas
-                               (usuario_id, grupo_id, descricao, valor, data, entrada_fixa_id)
-                           VALUES (%s, %s, %s, %s, %s, %s)
-                           RETURNING *""",
-                        (fixa["usuario_id"], fixa["grupo_id"], fixa["descricao"],
-                         fixa["valor"], data_devida, fixa["id"]),
-                    )
-                    entrada = dict(cur.fetchone())
-                    conn.commit()
-                    lancadas.append(entrada)
-                except psycopg.errors.UniqueViolation:
-                    conn.rollback()
-                    continue
+            # ---- Passe 2: mês seguinte, antecipado ----------------------
+            proximo = somar_meses(hoje.replace(day=1), 1)
+            lancada = _inserir_lancamento(conn, fixa, proximo.year, proximo.month)
+            if lancada:
+                lancadas.append(lancada)
 
     return lancadas
 

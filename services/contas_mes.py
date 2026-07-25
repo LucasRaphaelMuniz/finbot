@@ -524,3 +524,56 @@ def totais_contas_mes(usuario_id: int, mes: str = None) -> dict:
     """Só os totais, pro StatCard do dashboard — mesma montagem de linhas,
     pra não existir um segundo jeito de somar a mesma coisa."""
     return listar_contas_mes(usuario_id, mes)["totais"]
+
+
+# ---------------------------------------------------------------------------
+# Detalhe de uma linha (pedido do Lucas, 24/07/2026: "clicar no Cartão abre
+# as despesas do cartão no mês")
+# ---------------------------------------------------------------------------
+
+def detalhe_conta(usuario_id: int, chave: str) -> dict:
+    """
+    Breakdown de UMA linha do board. Só existe pra fatura: ela é 1 card
+    resumindo N gastos, e é exatamente essa lista que este endpoint devolve.
+    Gasto avulso/fixa já É o item — não tem o que abrir por trás dele, e o
+    front nem oferece o clique nesse caso (não é uma limitação escondida:
+    pedir detalhe de uma chave "gasto:" é erro de uso, por isso 400).
+
+    Traz TODOS os gastos daquele cartão naquela competência, não só os que
+    entram no board como linha própria — o card resume o TOTAL da fatura
+    (que inclui compra avulsa no cartão), então o detalhe tem que bater com
+    esse total, senão a soma dos itens do modal não fecharia com o valor do
+    card que o abriu.
+    """
+    tipo, forma_id, competencia = parsear_chave(chave)
+    if tipo != "fatura":
+        raise AppError("Só faturas têm detalhe — a conta já é o item.", 400, "sem_detalhe")
+
+    forma = next((f for f in get_formas_pagamento(usuario_id) if f["id"] == forma_id), None)
+    if not forma:
+        raise AppError("Forma de pagamento não encontrada.", 404, "nao_encontrado")
+
+    with get_conn() as conn:
+        gid = _get_grupo_id(conn, usuario_id)
+        escopo, params = _filtro_escopo(gid, usuario_id)
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""SELECT g.id, g.descricao, g.valor, g.data,
+                           c.nome AS categoria_nome, cp.parcelas AS total_parcelas
+                    FROM gastos g
+                    LEFT JOIN categorias c          ON c.id  = g.categoria_id
+                    LEFT JOIN compras_parceladas cp ON cp.id = g.compra_parcelada_id
+                    WHERE {escopo} AND g.forma_pagamento_id = %s
+                      AND DATE_TRUNC('month', g.competencia) = DATE_TRUNC('month', %s::date)
+                    ORDER BY g.data, g.descricao""",
+                params + [forma_id, competencia],
+            )
+            itens = [dict(r) for r in cur.fetchall()]
+
+    return {
+        "chave": chave,
+        "forma_nome": forma["nome"],
+        "competencia": competencia.isoformat(),
+        "itens": itens,
+        "total": sum(float(i["valor"]) for i in itens),
+    }

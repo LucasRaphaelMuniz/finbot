@@ -21,10 +21,11 @@ import MesPicker from "@/components/MesPicker";
 import Loading from "@/components/Loading";
 import StatCard from "@/components/StatCard";
 import Toast from "@/components/Toast";
+import Modal from "@/components/Modal";
 import {
   Header, Board, Coluna, ColunaHeader, ColunaTitulo, ColunaTotal, Card,
   CardInfo, CardTitulo, CardDetalhe, CardValor, ValorRiscado, BotaoMover,
-  InputValor, Vazio, Resumo,
+  InputValor, Vazio, Resumo, ListaDetalhe, ItemDetalhe,
 } from "./styles";
 
 function mesAtualISO() {
@@ -51,6 +52,7 @@ export default function ContasPage() {
   const [arrastando, setArrastando] = useState(null); // chave do card em voo
   const [colunaAlvo, setColunaAlvo] = useState(null); // "a_pagar" | "pagas"
   const [salvando, setSalvando] = useState(null);
+  const [detalheChave, setDetalheChave] = useState(null); // fatura aberta no modal
 
   function avisar(mensagem, tipo = "sucesso") {
     setToast({ mensagem, tipo });
@@ -200,6 +202,7 @@ export default function ContasPage() {
                     onArrastar={setArrastando}
                     onMover={() => mover(c, true)}
                     onSalvarValor={(v) => salvarValor(c, v)}
+                    onAbrirDetalhe={setDetalheChave}
                   />
                 ))
               )}
@@ -222,6 +225,7 @@ export default function ContasPage() {
                     onArrastar={setArrastando}
                     onMover={() => mover(c, false)}
                     onSalvarValor={(v) => salvarValor(c, v)}
+                    onAbrirDetalhe={setDetalheChave}
                   />
                 ))
               )}
@@ -230,8 +234,51 @@ export default function ContasPage() {
         </>
       )}
 
+      <DetalheFatura chave={detalheChave} onFechar={() => setDetalheChave(null)} />
+
       <Toast mensagem={toast?.mensagem} tipo={toast?.tipo} />
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Modal de detalhe — pedido do Lucas (24/07/2026): "se eu clicar no Cartão,
+// ele abre as despesas do cartão no mês". Busca sob demanda (só quando abre;
+// `useApi(chave ? ... : null)` some ao fechar) em vez de vir junto com o
+// board inteiro — o board já carrega N linhas de fatura, e a maioria nunca é
+// clicada; buscar o detalhe de todas de cara seria trabalho jogado fora.
+function DetalheFatura({ chave, onFechar }) {
+  const url = chave ? `/contas/${chave}/detalhe` : null;
+  const { dados, loading } = useApi(url, { skip: !chave });
+
+  return (
+    <Modal aberto={!!chave} titulo={dados ? `Fatura ${dados.forma_nome}` : "Fatura"} onFechar={onFechar}>
+      {loading || !dados ? (
+        <Loading />
+      ) : (
+        <>
+          <ListaDetalhe>
+            {dados.itens.map((item) => (
+              <ItemDetalhe key={item.id}>
+                <div>
+                  <div>{item.descricao || "(sem descrição)"}</div>
+                  <CardDetalhe>
+                    {formatarDataBR(item.data)}
+                    {item.categoria_nome ? ` · ${item.categoria_nome}` : ""}
+                    {item.total_parcelas ? ` · parcela` : ""}
+                  </CardDetalhe>
+                </div>
+                <span>{brl(item.valor)}</span>
+              </ItemDetalhe>
+            ))}
+          </ListaDetalhe>
+          <ItemDetalhe style={{ fontWeight: 600, marginTop: 8 }}>
+            <span>Total</span>
+            <span>{brl(dados.total)}</span>
+          </ItemDetalhe>
+        </>
+      )}
+    </Modal>
   );
 }
 
@@ -286,9 +333,10 @@ function editarValorLocal(board, conta, valor) {
   return { ...board, a_pagar: aPagar, pagas, totais: recalcularTotais(board.entradas, aPagar, pagas) };
 }
 
-function CardConta({ conta, arrastando, salvando, onArrastar, onMover, onSalvarValor }) {
+function CardConta({ conta, arrastando, salvando, onArrastar, onMover, onSalvarValor, onAbrirDetalhe }) {
   const [editando, setEditando] = useState(false);
   const [texto, setTexto] = useState("");
+  const temDetalhe = conta.tipo === "fatura"; // só fatura resume N gastos por trás
 
   const arrastavel = conta.editavel && !salvando;
   // Numa fatura, o valor só vira editável DEPOIS de paga: antes disso o
@@ -337,8 +385,15 @@ function CardConta({ conta, arrastando, salvando, onArrastar, onMover, onSalvarV
         {conta.pago ? "✓" : "○"}
       </BotaoMover>
 
-      <CardInfo>
-        <CardTitulo>{conta.descricao}</CardTitulo>
+      <CardInfo
+        onClick={temDetalhe ? () => onAbrirDetalhe(conta.chave) : undefined}
+        style={temDetalhe ? { cursor: "pointer" } : undefined}
+        title={temDetalhe ? "Ver despesas do cartão neste mês" : undefined}
+      >
+        <CardTitulo>
+          {conta.descricao}
+          {temDetalhe && <span style={{ opacity: 0.5, fontWeight: 400 }}> ›</span>}
+        </CardTitulo>
         <CardDetalhe>
           {conta.vencimento ? `vence ${formatarDataBR(conta.vencimento)} · ` : ""}
           {conta.detalhe}

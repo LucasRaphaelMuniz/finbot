@@ -52,25 +52,38 @@ def resumo_mensal(usuario_id: int, mes: str = None) -> dict:
             for r in cur.fetchall():
                 fixo_variavel["fixo" if r["fixo"] else "variavel"] = float(r["total"])
 
-            # Últimos 6 meses — gastos por competência
+            # Últimos 6 meses — gastos por competência.
+            #
+            # BUG corrigido em 24/07/2026: a query só tinha limite INFERIOR
+            # (>= hoje - 5 meses), sem limite superior — qualquer gasto com
+            # competência FUTURA (parcela de compra parcelada, despesa fixa
+            # com prazo, ou o lançamento antecipado do mês seguinte que o
+            # passe 2 de despesas_fixas já materializa de propósito) entrava
+            # no gráfico, que passou a mostrar barras minguando até
+            # Maio/2027 num gráfico rotulado "últimos 6 meses". O `< mês
+            # seguinte ao pedido` fecha a janela pro lado que faltava.
             cur.execute(
                 f"""SELECT DATE_TRUNC('month', g.competencia) AS mes, SUM(g.valor) AS total
                     FROM gastos g
                     WHERE {filtro_gastos}
                       AND g.competencia >= (%s::date - INTERVAL '5 months')
+                      AND g.competencia <  (%s::date + INTERVAL '1 month')
                     GROUP BY mes ORDER BY mes""",
-                (param_gastos, competencia),
+                (param_gastos, competencia, competencia),
             )
             gastos_por_mes = {str(r["mes"])[:7]: float(r["total"]) for r in cur.fetchall()}
 
-            # Últimos 6 meses — entradas por mês
+            # Últimos 6 meses — entradas por mês (mesma correção; entradas
+            # também passaram a ter lançamento antecipado do mês seguinte —
+            # services/entradas_fixas.py, passe 2, 24/07/2026).
             cur.execute(
                 f"""SELECT DATE_TRUNC('month', e.data) AS mes, SUM(e.valor) AS total
                     FROM entradas e
                     WHERE {filtro_entradas}
                       AND e.data >= (%s::date - INTERVAL '5 months')
+                      AND e.data <  (%s::date + INTERVAL '1 month')
                     GROUP BY mes ORDER BY mes""",
-                (param_gastos, competencia),
+                (param_gastos, competencia, competencia),
             )
             entradas_por_mes = {str(r["mes"])[:7]: float(r["total"]) for r in cur.fetchall()}
 

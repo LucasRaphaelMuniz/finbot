@@ -12,7 +12,7 @@ from flask import Blueprint, request, g
 
 from middlewares.ensure_authenticated import ensure_authenticated, requer_grupo
 from utils.app_error import AppError
-from services.contas_mes import listar_contas_mes, marcar_conta, editar_valor_conta
+from services.contas_mes import listar_contas_mes, marcar_conta, editar_valor_conta, detalhe_conta
 
 bp = Blueprint("contas", __name__, url_prefix="/api/contas")
 
@@ -24,6 +24,14 @@ def listar():
     """?mes=YYYY-MM — mês do CAIXA (quando a conta é paga), não a competência
     do gasto. Default: mês corrente."""
     return listar_contas_mes(g.usuario_id, mes=request.args.get("mes"))
+
+
+@bp.route("/<path:chave>/detalhe", methods=["GET"])
+@ensure_authenticated
+@requer_grupo
+def detalhe(chave):
+    """Só faturas respondem — ver services/contas_mes.py::detalhe_conta."""
+    return detalhe_conta(g.usuario_id, chave)
 
 
 @bp.route("/<path:chave>", methods=["PATCH"])

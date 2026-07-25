@@ -185,6 +185,27 @@ export const Vazio = styled.p`
   padding: ${({ theme }) => theme.spacing(6)} 0;
 `;
 
+export const ListaDetalhe = styled.div`
+  min-width: 320px;
+  max-width: 420px;
+  max-height: 50vh;
+  overflow-y: auto;
+`;
+
+export const ItemDetalhe = styled.div`
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: ${({ theme }) => theme.spacing(3)};
+  padding: ${({ theme }) => theme.spacing(2)} 0;
+  border-bottom: 1px solid ${({ theme }) => theme.colors.border};
+  font-size: 14px;
+
+  &:last-child {
+    border-bottom: none;
+  }
+`;
+
 export const Resumo = styled.div`
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
