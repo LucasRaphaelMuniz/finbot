@@ -9,6 +9,7 @@ from utils.app_error import AppError
 from services.entradas import (
     registrar_entrada,
     get_entradas_mes,
+    get_entradas_competencia,
     atualizar_entrada,
     remover_entrada,
 )
@@ -21,11 +22,14 @@ bp = Blueprint("entradas", __name__, url_prefix="/api/entradas")
 @ensure_authenticated
 @requer_grupo
 def listar():
-    # services/entradas.py hoje só tem get_entradas_mes (mês corrente, usado
-    # pelo bot). Filtro por mês arbitrário fica pendente — o dashboard usa
-    # GET /api/resumo (services/resumo.py) pro histórico agregado; a lista
-    # crua por mês passado só importa pra tela de /lancamentos (Fase 5.1),
-    # que ainda não existe.
+    # ?mes=YYYY-MM (24/07/2026): preenche o gap que este comentário
+    # documentava — popup de detalhe do gráfico "últimos 6 meses" do
+    # dashboard precisa da lista crua de um mês arbitrário, não só do
+    # corrente. Sem o parâmetro, comportamento de sempre (get_entradas_mes,
+    # usado pelo bot) — não quebra ninguém que já chama sem `mes`.
+    mes = request.args.get("mes")
+    if mes:
+        return {"itens": get_entradas_competencia(g.usuario_id, f"{mes}-01")}
     return {"itens": get_entradas_mes(g.usuario_id)}
 
 

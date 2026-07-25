@@ -95,6 +95,36 @@ def get_total_entradas_mes(usuario_id: int) -> float:
 # esta versão recebe a competência explícita.
 # ---------------------------------------------------------------------------
 
+def get_entradas_competencia(usuario_id: int, competencia: str) -> list[dict]:
+    """
+    Versão lista (não só soma) de get_total_entradas_competencia — gap
+    documentado desde a Fase 4.3 em routes/entradas.py (GET só cobria o mês
+    corrente via get_entradas_mes). Preenchido em 24/07/2026 pro popup de
+    detalhe do gráfico "últimos 6 meses" do dashboard: clicar numa barra de
+    entrada de um mês qualquer precisa dos lançamentos daquele mês, não só
+    do corrente.
+    """
+    with get_conn() as conn:
+        gid = _get_grupo_id(conn, usuario_id)
+        with conn.cursor() as cur:
+            if gid:
+                cur.execute(
+                    """SELECT * FROM entradas
+                       WHERE grupo_id = %s AND DATE_TRUNC('month', data) = DATE_TRUNC('month', %s::date)
+                       ORDER BY data DESC""",
+                    (gid, competencia),
+                )
+            else:
+                cur.execute(
+                    """SELECT * FROM entradas
+                       WHERE usuario_id = %s AND grupo_id IS NULL
+                         AND DATE_TRUNC('month', data) = DATE_TRUNC('month', %s::date)
+                       ORDER BY data DESC""",
+                    (usuario_id, competencia),
+                )
+            return [dict(r) for r in cur.fetchall()]
+
+
 def get_total_entradas_competencia(usuario_id: int, competencia: str) -> float:
     """competencia: "YYYY-MM-01" (ou qualquer data — só o mês/ano importam)."""
     with get_conn() as conn:

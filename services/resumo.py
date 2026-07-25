@@ -54,36 +54,35 @@ def resumo_mensal(usuario_id: int, mes: str = None) -> dict:
 
             # Últimos 6 meses — gastos por competência.
             #
-            # BUG corrigido em 24/07/2026: a query só tinha limite INFERIOR
-            # (>= hoje - 5 meses), sem limite superior — qualquer gasto com
-            # competência FUTURA (parcela de compra parcelada, despesa fixa
-            # com prazo, ou o lançamento antecipado do mês seguinte que o
-            # passe 2 de despesas_fixas já materializa de propósito) entrava
-            # no gráfico, que passou a mostrar barras minguando até
-            # Maio/2027 num gráfico rotulado "últimos 6 meses". O `< mês
-            # seguinte ao pedido` fecha a janela pro lado que faltava.
+            # SEM limite superior de propósito (revertido em 24/07/2026 —
+            # tinha colocado `< mês seguinte` achando que era bug, o Lucas
+            # corrigiu: não é. A query só tem piso (>= hoje - 5 meses); o
+            # gráfico "últimos 6 meses" também mostra pra frente tudo que
+            # já está comprometido — parcela de compra parcelada, despesa
+            # fixa com prazo, o lançamento antecipado do mês seguinte
+            # (passe 2 de despesas_fixas/entradas_fixas). As barras
+            # minguando mês a mês são informação real: quantas parcelas
+            # ainda restam, não ruído. O nome do gráfico ("últimos 6
+            # meses") ficou descolado do que ele mostra pra frente — não
+            # mexi nisso agora, é rótulo, não comportamento.
             cur.execute(
                 f"""SELECT DATE_TRUNC('month', g.competencia) AS mes, SUM(g.valor) AS total
                     FROM gastos g
                     WHERE {filtro_gastos}
                       AND g.competencia >= (%s::date - INTERVAL '5 months')
-                      AND g.competencia <  (%s::date + INTERVAL '1 month')
                     GROUP BY mes ORDER BY mes""",
-                (param_gastos, competencia, competencia),
+                (param_gastos, competencia),
             )
             gastos_por_mes = {str(r["mes"])[:7]: float(r["total"]) for r in cur.fetchall()}
 
-            # Últimos 6 meses — entradas por mês (mesma correção; entradas
-            # também passaram a ter lançamento antecipado do mês seguinte —
-            # services/entradas_fixas.py, passe 2, 24/07/2026).
+            # Últimos 6 meses — entradas por mês (mesmo raciocínio acima).
             cur.execute(
                 f"""SELECT DATE_TRUNC('month', e.data) AS mes, SUM(e.valor) AS total
                     FROM entradas e
                     WHERE {filtro_entradas}
                       AND e.data >= (%s::date - INTERVAL '5 months')
-                      AND e.data <  (%s::date + INTERVAL '1 month')
                     GROUP BY mes ORDER BY mes""",
-                (param_gastos, competencia, competencia),
+                (param_gastos, competencia),
             )
             entradas_por_mes = {str(r["mes"])[:7]: float(r["total"]) for r in cur.fetchall()}
 

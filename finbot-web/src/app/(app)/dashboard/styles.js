@@ -40,3 +40,35 @@ export const ChartTitulo = styled.h3`
   margin-bottom: ${({ theme }) => theme.spacing(3)};
   font-weight: 500;
 `;
+
+// Popup de detalhe ao clicar numa barra do gráfico "últimos 6 meses"
+// (pedido do Lucas, 24/07/2026). Mesmo desenho de components/Modal + lista
+// usado em (app)/contas/styles.js pro detalhe de fatura — duplicado aqui
+// (poucas linhas) em vez de compartilhado entre páginas, mesmo padrão já
+// usado no projeto de cada tela ter seu styles.js próprio.
+export const ListaDetalhe = styled.div`
+  min-width: 320px;
+  max-width: 420px;
+  max-height: 50vh;
+  overflow-y: auto;
+`;
+
+export const ItemDetalhe = styled.div`
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: ${({ theme }) => theme.spacing(3)};
+  padding: ${({ theme }) => theme.spacing(2)} 0;
+  border-bottom: 1px solid ${({ theme }) => theme.colors.border};
+  font-size: 14px;
+
+  &:last-child {
+    border-bottom: none;
+  }
+`;
+
+export const TextoMuted = styled.div`
+  font-size: 12px;
+  color: ${({ theme }) => theme.colors.textMuted};
+  margin-top: 2px;
+`;
