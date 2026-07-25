@@ -27,6 +27,7 @@ import {
   Header, Board, Coluna, ColunaHeader, ColunaTitulo, ColunaTotal, Card,
   CardInfo, CardTitulo, CardDetalhe, CardValor, ValorRiscado, BotaoMover, Indicador,
   InputValor, Vazio, Resumo, ListaDetalhe, ItemDetalhe,
+  GrupoCategoria, ItemAninhado, SeletorCategoria,
   BotaoNovaEntrada, FormNovaEntrada, CampoDescricao, CampoDia,
 } from "./styles";
 
@@ -379,6 +380,23 @@ export default function ContasPage() {
   );
 }
 
+// Agrupa por categoria (pedido do Lucas, 24/07/2026: "filtro ou
+// classificação por tipo de despesa"). Função pura, mesmo desenho de
+// dashboard/page.jsx::agruparPorForma — só reorganiza o que o endpoint já
+// devolve, nenhuma agregação nova no backend. Ordenado por total
+// decrescente: a categoria que mais pesou na fatura aparece primeiro.
+function agruparPorCategoria(itens) {
+  const grupos = new Map();
+  for (const item of itens) {
+    const nome = item.categoria_nome || "Sem categoria";
+    if (!grupos.has(nome)) grupos.set(nome, { nome, total: 0, itens: [] });
+    const grupo = grupos.get(nome);
+    grupo.total += Number(item.valor);
+    grupo.itens.push(item);
+  }
+  return [...grupos.values()].sort((a, b) => b.total - a.total);
+}
+
 // ---------------------------------------------------------------------------
 // Modal de detalhe — pedido do Lucas (24/07/2026): "se eu clicar no Cartão,
 // ele abre as despesas do cartão no mês". Busca sob demanda (só quando abre;
@@ -389,26 +407,82 @@ function DetalheFatura({ chave, onFechar }) {
   const url = chave ? `/contas/${chave}/detalhe` : null;
   const { dados, loading } = useApi(url, { skip: !chave });
 
+  // Filtro/classificação por categoria (mesmo pedido, junto do espaçamento
+  // — "esta muito colado, e se possivel um filtro"). Reseta ao trocar de
+  // fatura: filtro/expandido de um cartão não devia vazar pro próximo.
+  const [categoriaFiltro, setCategoriaFiltro] = useState("");
+  const [expandidos, setExpandidos] = useState(() => new Set());
+  useEffect(() => {
+    setCategoriaFiltro("");
+    setExpandidos(new Set());
+  }, [chave]);
+
+  function alternar(nome) {
+    setExpandidos((atual) => {
+      const novo = new Set(atual);
+      novo.has(nome) ? novo.delete(nome) : novo.add(nome);
+      return novo;
+    });
+  }
+
+  const itens = dados?.itens || [];
+  const grupos = agruparPorCategoria(itens);
+  // Com categoria escolhida não faz sentido esconder atrás de um
+  // cabeçalho de grupo — é o único item da lista, mostra direto.
+  const gruposVisiveis = categoriaFiltro
+    ? grupos.filter((g) => g.nome === categoriaFiltro)
+    : grupos;
+
   return (
-    <Modal aberto={!!chave} titulo={dados ? `Fatura ${dados.forma_nome}` : "Fatura"} onFechar={onFechar}>
+    <Modal
+      aberto={!!chave}
+      titulo={dados ? `Fatura ${dados.forma_nome}` : "Fatura"}
+      onFechar={onFechar}
+      largura="min(600px, 92vw)"
+    >
       {loading || !dados ? (
         <Loading />
       ) : (
         <>
+          {grupos.length > 1 && (
+            <SeletorCategoria
+              value={categoriaFiltro}
+              onChange={(e) => setCategoriaFiltro(e.target.value)}
+            >
+              <option value="">Todas as categorias</option>
+              {grupos.map((g) => (
+                <option key={g.nome} value={g.nome}>
+                  {g.nome} · {brl(g.total)}
+                </option>
+              ))}
+            </SeletorCategoria>
+          )}
           <ListaDetalhe>
-            {dados.itens.map((item) => (
-              <ItemDetalhe key={item.id}>
-                <div>
-                  <div>{item.descricao || "(sem descrição)"}</div>
-                  <CardDetalhe>
-                    {formatarDataBR(item.data)}
-                    {item.categoria_nome ? ` · ${item.categoria_nome}` : ""}
-                    {item.total_parcelas ? ` · parcela` : ""}
-                  </CardDetalhe>
+            {gruposVisiveis.map((grupo) => {
+              const aberto = !!categoriaFiltro || expandidos.has(grupo.nome);
+              return (
+                <div key={grupo.nome}>
+                  {!categoriaFiltro && (
+                    <GrupoCategoria type="button" onClick={() => alternar(grupo.nome)}>
+                      <span>{aberto ? "▾" : "▸"} {grupo.nome}</span>
+                      <span>{brl(grupo.total)}</span>
+                    </GrupoCategoria>
+                  )}
+                  {aberto && grupo.itens.map((item) => (
+                    <ItemAninhado key={item.id}>
+                      <div>
+                        <div>{item.descricao || "(sem descrição)"}</div>
+                        <CardDetalhe>
+                          {formatarDataBR(item.data)}
+                          {item.total_parcelas ? ` · parcela` : ""}
+                        </CardDetalhe>
+                      </div>
+                      <span>{brl(item.valor)}</span>
+                    </ItemAninhado>
+                  ))}
                 </div>
-                <span>{brl(item.valor)}</span>
-              </ItemDetalhe>
-            ))}
+              );
+            })}
           </ListaDetalhe>
           <ItemDetalhe style={{ fontWeight: 600, marginTop: 8 }}>
             <span>Total</span>

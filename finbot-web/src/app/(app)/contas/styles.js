@@ -203,10 +203,15 @@ export const Vazio = styled.p`
   padding: ${({ theme }) => theme.spacing(6)} 0;
 `;
 
+// min/max-width e padding aumentados (pedido do Lucas, 24/07/2026: "esta
+// muito colado") — o modal de detalhe de fatura usa a largura padrão de
+// Modal (480px) e cabia pouco: item, categoria e valor quase se tocando.
+// Aumenta o respiro entre linhas (padding vertical) e a largura útil junto
+// com o `largura` maior passado ao <Modal> em DetalheFatura.
 export const ListaDetalhe = styled.div`
   min-width: 320px;
-  max-width: 420px;
-  max-height: 50vh;
+  max-width: 560px;
+  max-height: 55vh;
   overflow-y: auto;
 `;
 
@@ -214,13 +219,78 @@ export const ItemDetalhe = styled.div`
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: ${({ theme }) => theme.spacing(3)};
-  padding: ${({ theme }) => theme.spacing(2)} 0;
+  gap: ${({ theme }) => theme.spacing(4)};
+  padding: ${({ theme }) => theme.spacing(3)} ${({ theme }) => theme.spacing(1)};
   border-bottom: 1px solid ${({ theme }) => theme.colors.border};
   font-size: 14px;
+  line-height: 1.6;
 
   &:last-child {
     border-bottom: none;
+  }
+`;
+
+// Cabeçalho clicável de um grupo de categoria (classificação por tipo de
+// despesa, mesmo pedido). Espelha dashboard/styles.js::GrupoForma — mesmo
+// padrão de "linha clicável que expande", só que agrupando por categoria
+// em vez de forma de pagamento (aqui já se sabe a forma: é a fatura
+// clicada, o que falta discriminar é o tipo de gasto dentro dela).
+export const GrupoCategoria = styled.button`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: ${({ theme }) => theme.spacing(3)};
+  padding: ${({ theme }) => theme.spacing(3)} ${({ theme }) => theme.spacing(1)};
+  border: none;
+  border-bottom: 1px solid ${({ theme }) => theme.colors.border};
+  background: none;
+  color: ${({ theme }) => theme.colors.text};
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+
+  &:hover {
+    color: ${({ theme }) => theme.colors.primary};
+  }
+`;
+
+export const ItemAninhado = styled.div`
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: ${({ theme }) => theme.spacing(4)};
+  padding: ${({ theme }) => theme.spacing(2.5)} ${({ theme }) => theme.spacing(1)}
+    ${({ theme }) => theme.spacing(2.5)} ${({ theme }) => theme.spacing(5)};
+  font-size: 13px;
+  line-height: 1.6;
+  border-bottom: 1px solid ${({ theme }) => theme.colors.border};
+
+  &:last-child {
+    border-bottom: none;
+  }
+`;
+
+// Filtro por categoria (pedido do Lucas: "um filtro ou classificação por
+// tipo de despesa") — select simples em vez de botões/chips: a lista de
+// categorias é variável e pode crescer, um select escala sem quebrar
+// layout. "Todas" (valor "") mostra os grupos; escolher uma categoria
+// filtra pra só ela, já expandida (não faz sentido esconder atrás de um
+// cabeçalho de grupo quando é o único que sobrou).
+export const SeletorCategoria = styled.select`
+  background: ${({ theme }) => theme.colors.surfaceAlt};
+  border: 1px solid ${({ theme }) => theme.colors.border};
+  border-radius: ${({ theme }) => theme.radius.sm};
+  padding: ${({ theme }) => theme.spacing(2)} ${({ theme }) => theme.spacing(3)};
+  font-size: 13px;
+  color: ${({ theme }) => theme.colors.text};
+  margin-bottom: ${({ theme }) => theme.spacing(3)};
+
+  &:focus {
+    outline: none;
+    border-color: ${({ theme }) => theme.colors.primary};
   }
 `;
 
