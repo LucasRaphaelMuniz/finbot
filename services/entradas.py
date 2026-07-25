@@ -14,19 +14,37 @@ from db import get_conn, _get_grupo_id
 
 
 def registrar_entrada(usuario_id: int, valor: float, descricao: str = "",
-                       entrada_fixa_id: int = None) -> dict:
-    """entrada_fixa_id (migração 023): vincula a entrada ao modelo
-    recorrente que a originou — o índice uq_entrada_fixa_mes usa isso pra
-    impedir 2 lançamentos da mesma fixa no mesmo mês."""
+                       entrada_fixa_id: int = None, data=None) -> dict:
+    """
+    entrada_fixa_id (migração 023): vincula a entrada ao modelo recorrente
+    que a originou — o índice uq_entrada_fixa_mes usa isso pra impedir 2
+    lançamentos da mesma fixa no mesmo mês.
+
+    `data` (24/07/2026, pedido do Lucas: "opção de incluir uma nova [entrada]
+    no mês em referência" — o board de /contas navega meses, e sem isso
+    toda entrada criada por lá nascia com a data de HOJE, mesmo olhando
+    agosto em julho). None = comportamento de sempre, usa o DEFAULT NOW()
+    da coluna (migração 005) — o bot e o form de Lançamentos não precisam
+    mudar nada.
+    """
     with get_conn() as conn:
         gid = _get_grupo_id(conn, usuario_id)
         with conn.cursor() as cur:
-            cur.execute(
-                """INSERT INTO entradas (usuario_id, grupo_id, descricao, valor, entrada_fixa_id)
-                   VALUES (%s, %s, %s, %s, %s)
-                   RETURNING *""",
-                (usuario_id, gid, descricao, valor, entrada_fixa_id),
-            )
+            if data is not None:
+                cur.execute(
+                    """INSERT INTO entradas
+                           (usuario_id, grupo_id, descricao, valor, entrada_fixa_id, data)
+                       VALUES (%s, %s, %s, %s, %s, %s)
+                       RETURNING *""",
+                    (usuario_id, gid, descricao, valor, entrada_fixa_id, data),
+                )
+            else:
+                cur.execute(
+                    """INSERT INTO entradas (usuario_id, grupo_id, descricao, valor, entrada_fixa_id)
+                       VALUES (%s, %s, %s, %s, %s)
+                       RETURNING *""",
+                    (usuario_id, gid, descricao, valor, entrada_fixa_id),
+                )
             conn.commit()
             return dict(cur.fetchone())
 

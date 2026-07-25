@@ -21,8 +21,8 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from services.contas_mes import (
-    competencias_que_vencem_em, chave_gasto, chave_fatura, parsear_chave,
-    _mes_para_data,
+    competencias_que_vencem_em, chave_gasto, chave_fatura, chave_entrada,
+    parsear_chave, _mes_para_data,
 )
 from utils.app_error import AppError
 
@@ -98,6 +98,10 @@ def test_ida_e_volta_da_chave_de_fatura():
     chave = chave_fatura(5, date(2026, 7, 1))
     assert chave == "fatura:5:2026-07-01"
     assert parsear_chave(chave) == ("fatura", 5, date(2026, 7, 1))
+
+
+def test_ida_e_volta_da_chave_de_entrada():
+    assert parsear_chave(chave_entrada(9)) == ("entrada", 9, None)
 
 
 @pytest.mark.parametrize("chave", [

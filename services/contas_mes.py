@@ -31,16 +31,20 @@ Consequência assumida: `total_a_pagar` daqui é MENOR que `caixa.saida_total`
 do /api/resumo, que inclui os avulsos à vista. São perguntas diferentes; por
 isso o bloco `caixa` do resumo não foi alterado, só ganhou um vizinho.
 
-DUAS IDENTIDADES DE LINHA
+TRÊS IDENTIDADES DE LINHA
 -------------------------
-"Internet 99,90"   = 1 linha = 1 registro em `gastos`  -> chave "gasto:{id}"
-"Cartão BTG 6.000" = 1 linha = N registros em `gastos` -> chave
+"Internet 99,90"   = 1 linha = 1 registro em `gastos`   -> chave "gasto:{id}"
+"Cartão BTG 6.000" = 1 linha = N registros em `gastos`  -> chave
                      "fatura:{forma_id}:{competencia}"
+"Salário Lucas"    = 1 linha = 1 registro em `entradas` -> chave "entrada:{id}"
 
 Por isso o estado de "pago" mora em dois lugares (migração 027): a coluna
 `gastos.pago` e a tabela `faturas_pagamentos`. A chave string existe pra que
-o front trate as duas como a mesma coisa — ele arrasta um card e manda a
-chave de volta, sem saber a diferença.
+o front trate as três como a mesma coisa — ele arrasta/edita um card e manda
+a chave de volta, sem saber a diferença. Entrada é a mais simples das três:
+não tem status de pago (dinheiro que entra não fica "a pagar"), só valor
+editável — por isso `marcar_conta` a rejeita explicitamente (400) e só
+`editar_valor_conta` a aceita.
 """
 
 import calendar
@@ -89,9 +93,14 @@ def chave_fatura(forma_pagamento_id: int, competencia: date) -> str:
     return f"fatura:{forma_pagamento_id}:{competencia.isoformat()}"
 
 
+def chave_entrada(entrada_id: int) -> str:
+    return f"entrada:{entrada_id}"
+
+
 def parsear_chave(chave: str) -> tuple:
     """
     "gasto:123"                  -> ("gasto", 123, None)
+    "entrada:9"                  -> ("entrada", 9, None)
     "fatura:5:2026-07-01"        -> ("fatura", 5, date(2026, 7, 1))
 
     Levanta AppError 400 em qualquer formato fora disso — a chave vem da
@@ -101,6 +110,8 @@ def parsear_chave(chave: str) -> tuple:
     try:
         if partes[0] == "gasto" and len(partes) == 2:
             return ("gasto", int(partes[1]), None)
+        if partes[0] == "entrada" and len(partes) == 2:
+            return ("entrada", int(partes[1]), None)
         if partes[0] == "fatura" and len(partes) == 3:
             return ("fatura", int(partes[1]), date.fromisoformat(partes[2]))
     except (ValueError, TypeError):
@@ -394,11 +405,15 @@ def _linhas_entradas(conn, gid, usuario_id, mes_alvo: date) -> list[dict]:
             params + [mes_alvo],
         )
         return [{
-            "chave": f"entrada:{r['id']}",
+            "chave": chave_entrada(r["id"]),
             "tipo": "entrada",
             "descricao": r["descricao"] or "(sem descrição)",
             "valor": float(r["valor"]),
             "data": r["data"].isoformat() if r["data"] else None,
+            # Editável igual gasto/fixa (pedido do Lucas, 24/07/2026) — sem
+            # status de pago, então não passa por marcar_conta, só por
+            # editar_valor_conta (que reusa services.entradas.atualizar_entrada).
+            "editavel": True,
         } for r in cur.fetchall()]
 
 
@@ -417,8 +432,20 @@ def marcar_conta(usuario_id: int, chave: str, pago: bool,
     significa que o valor do gasto estava errado, e aí o certo é editar o
     gasto (services/gastos.py::atualizar_gasto) em vez de guardar dois
     números divergentes pra mesma linha.
+
+    Entrada não passa por aqui: dinheiro que entra não tem "pago/não pago",
+    só valor. O front nunca chama isto pra uma chave "entrada:" (o card não
+    tem o botão de status), mas a rejeição explícita existe pra não deixar
+    a chave cair, sem querer, no bloco de fatura logo abaixo — ident de
+    entrada tratado como forma_pagamento_id seria um bug silencioso.
     """
     tipo, ident, competencia = parsear_chave(chave)
+
+    if tipo == "entrada":
+        raise AppError(
+            "Entrada não tem status de pago — edite o valor diretamente.",
+            400, "sem_status_pago",
+        )
 
     with get_conn() as conn:
         gid = _get_grupo_id(conn, usuario_id)
@@ -468,6 +495,10 @@ def editar_valor_conta(usuario_id: int, chave: str, valor: float) -> dict:
 
     Gasto: altera `gastos.valor` de verdade (é o valor da conta).
 
+    Entrada: altera `entradas.valor` de verdade, mesma lógica do gasto —
+    entrada não tem os dois números (fechado x pago) que a fatura tem, é
+    só um valor (services/entradas.py::atualizar_entrada).
+
     Fatura: NÃO altera `gastos` — grava valor_pago. Editar o total de uma
     fatura significaria redistribuir a diferença entre N compras já
     registradas, e não existe critério pra isso. O que o Lucas quer dizer
@@ -492,6 +523,13 @@ def editar_valor_conta(usuario_id: int, chave: str, valor: float) -> dict:
         gasto = atualizar_gasto(usuario_id, ident, valor=float(valor))
         if not gasto:
             raise AppError("Conta não encontrada.", 404, "nao_encontrado")
+        return {"chave": chave, "valor": float(valor)}
+
+    if tipo == "entrada":
+        from services.entradas import atualizar_entrada
+        entrada = atualizar_entrada(usuario_id, ident, valor=float(valor))
+        if not entrada:
+            raise AppError("Entrada não encontrada.", 404, "nao_encontrado")
         return {"chave": chave, "valor": float(valor)}
 
     if not any(f["id"] == ident for f in get_formas_pagamento(usuario_id)):

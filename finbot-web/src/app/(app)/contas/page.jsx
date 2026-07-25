@@ -16,25 +16,52 @@
 import { useEffect, useMemo, useState } from "react";
 import { useApi } from "@/hooks/useApi";
 import api from "@/services/api";
-import { brl, formatarDataBR, parseValorBR } from "@/utils/format";
+import { brl, formatarCompetencia, formatarDataBR, parseValorBR } from "@/utils/format";
 import MesPicker from "@/components/MesPicker";
 import Loading from "@/components/Loading";
 import StatCard from "@/components/StatCard";
 import Toast from "@/components/Toast";
 import Modal from "@/components/Modal";
+import MoneyInput from "@/components/MoneyInput";
 import {
   Header, Board, Coluna, ColunaHeader, ColunaTitulo, ColunaTotal, Card,
   CardInfo, CardTitulo, CardDetalhe, CardValor, ValorRiscado, BotaoMover,
   InputValor, Vazio, Resumo, ListaDetalhe, ItemDetalhe,
+  BotaoNovaEntrada, FormNovaEntrada, CampoDia,
 } from "./styles";
+
+// Mesmo truque de despesas fixas (fixas/page.jsx): dia_lancamento=31 num
+// mês de 30 dias cai no último dia do mês, não "data inválida".
+function ultimoDiaDoMes(mesISO) {
+  const [ano, mesNum] = mesISO.split("-").map(Number);
+  return new Date(ano, mesNum, 0).getDate();
+}
 
 function mesAtualISO() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
+// Pedido do Lucas (24/07/2026): "deve ser salvo qual foi o último mês
+// consultado". Guarda só o mês, não os dados — reabrir a tela sempre busca
+// de novo, só não força a pessoa a navegar de volta pro mês que estava
+// vendo (ex: revisando julho de propósito, sai da tela, volta: continua em
+// julho, não pula pro mês corrente).
+const CHAVE_ULTIMO_MES = "finbot:contas:ultimo-mes";
+
 export default function ContasPage() {
+  // Começa sempre com o mês atual — igual no servidor (SSR) e no 1º render
+  // do cliente, pra não divergir (localStorage só existe no browser). Um
+  // useEffect logo abaixo troca pro mês salvo assim que a página monta.
   const [mes, setMes] = useState(mesAtualISO());
+  useEffect(() => {
+    const salvo = window.localStorage.getItem(CHAVE_ULTIMO_MES);
+    if (salvo && /^\d{4}-\d{2}$/.test(salvo)) setMes(salvo);
+  }, []);
+  useEffect(() => {
+    window.localStorage.setItem(CHAVE_ULTIMO_MES, mes);
+  }, [mes]);
+
   const url = useMemo(() => `/contas?mes=${mes}`, [mes]);
   const { dados, loading, refetch } = useApi(url);
 
@@ -174,15 +201,19 @@ export default function ContasPage() {
                 <Vazio>Nenhuma entrada lançada neste mês.</Vazio>
               ) : (
                 dadosExibidos.entradas.map((e) => (
-                  <Card key={e.chave} $origem="entrada">
-                    <CardInfo>
-                      <CardTitulo>{e.descricao}</CardTitulo>
-                      <CardDetalhe>{formatarDataBR(e.data)}</CardDetalhe>
-                    </CardInfo>
-                    <CardValor as="span">{brl(e.valor)}</CardValor>
-                  </Card>
+                  <CardConta
+                    key={e.chave}
+                    conta={e}
+                    arrastando={false}
+                    salvando={salvando === e.chave}
+                    onArrastar={() => {}}
+                    onMover={() => {}}
+                    onSalvarValor={(v) => salvarValor(e, v)}
+                    onAbrirDetalhe={() => {}}
+                  />
                 ))
               )}
+              <NovaEntrada mes={mes} onCriada={() => refetch({ silent: true })} onErro={(m) => avisar(m, "erro")} />
             </Coluna>
 
             <Coluna {...propsColuna("a_pagar")}>
@@ -322,6 +353,12 @@ function moverLocal(board, chave, pago) {
 
 function editarValorLocal(board, conta, valor) {
   if (!board) return board;
+
+  if (conta.tipo === "entrada") {
+    const entradas = board.entradas.map((e) => (e.chave === conta.chave ? { ...e, valor } : e));
+    return { ...board, entradas, totais: recalcularTotais(entradas, board.a_pagar, board.pagas) };
+  }
+
   const aplica = (lista) => lista.map((c) => {
     if (c.chave !== conta.chave) return c;
     // Fatura: o valor exibido some de `valor_pago` quando ela está paga —
@@ -333,15 +370,87 @@ function editarValorLocal(board, conta, valor) {
   return { ...board, a_pagar: aPagar, pagas, totais: recalcularTotais(board.entradas, aPagar, pagas) };
 }
 
+// ---------------------------------------------------------------------------
+// Nova entrada dentro do mês do board (pedido do Lucas, 24/07/2026): antes
+// só dava pra criar entrada pela tela de Lançamentos, que sempre data com
+// HOJE — sem jeito de já lançar o salário de agosto navegando em julho.
+// `data` vai explícita no POST (services/entradas.py::registrar_entrada
+// ganhou esse parâmetro; sem ele, sempre caía no DEFAULT NOW() da coluna).
+// ---------------------------------------------------------------------------
+
+function NovaEntrada({ mes, onCriada, onErro }) {
+  const diaPadrao = mes === mesAtualISO() ? new Date().getDate() : 1;
+  const [aberto, setAberto] = useState(false);
+  const [descricao, setDescricao] = useState("");
+  const [valor, setValor] = useState(0);
+  const [dia, setDia] = useState(diaPadrao);
+  const [enviando, setEnviando] = useState(false);
+
+  function abrir() {
+    setDescricao("");
+    setValor(0);
+    setDia(diaPadrao);
+    setAberto(true);
+  }
+
+  async function salvar(e) {
+    e.preventDefault();
+    if (!valor || valor <= 0) return;
+    setEnviando(true);
+    try {
+      const diaValido = Math.min(Math.max(1, Number(dia) || 1), ultimoDiaDoMes(mes));
+      await api.post("/entradas", {
+        valor, descricao, data: `${mes}-${String(diaValido).padStart(2, "0")}`,
+      });
+      setAberto(false);
+      onCriada();
+    } catch (err) {
+      onErro(err?.response?.data?.mensagem || "Não foi possível criar a entrada.");
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  if (!aberto) {
+    return (
+      <BotaoNovaEntrada type="button" onClick={abrir}>
+        + Nova entrada em {formatarCompetencia(`${mes}-01`)}
+      </BotaoNovaEntrada>
+    );
+  }
+
+  return (
+    <FormNovaEntrada onSubmit={salvar}>
+      <input
+        placeholder="Descrição" value={descricao} autoFocus
+        onChange={(e) => setDescricao(e.target.value)}
+      />
+      <MoneyInput value={valor} onChange={setValor} />
+      <CampoDia
+        type="number" min={1} max={31} value={dia} title="Dia do mês"
+        onChange={(e) => setDia(e.target.value)}
+      />
+      <button type="submit" disabled={enviando}>{enviando ? "..." : "Salvar"}</button>
+      <button type="button" onClick={() => setAberto(false)}>Cancelar</button>
+    </FormNovaEntrada>
+  );
+}
+
 function CardConta({ conta, arrastando, salvando, onArrastar, onMover, onSalvarValor, onAbrirDetalhe }) {
   const [editando, setEditando] = useState(false);
   const [texto, setTexto] = useState("");
   const temDetalhe = conta.tipo === "fatura"; // só fatura resume N gastos por trás
+  // Entrada não tem status de pago (dinheiro que entra não fica "a pagar")
+  // — services/contas_mes.py::marcar_conta rejeita essa chave com 400, então
+  // nem oferece o botão/arraste aqui: não é um controle desabilitado à toa,
+  // é um controle que não existe pra esse tipo.
+  const temStatusPago = conta.tipo !== "entrada";
 
-  const arrastavel = conta.editavel && !salvando;
+  const arrastavel = temStatusPago && conta.editavel && !salvando;
   // Numa fatura, o valor só vira editável DEPOIS de paga: antes disso o
   // número exibido é a soma real dos lançamentos, e "quanto pretendo pagar"
   // não é um dado (o backend recusa com 409 — services/contas_mes.py).
+  // Entrada é sempre editável (não tem esse impasse — só existe 1 valor).
   const podeEditarValor =
     conta.editavel && (conta.tipo !== "fatura" || conta.pago);
 
@@ -375,15 +484,17 @@ function CardConta({ conta, arrastando, salvando, onArrastar, onMover, onSalvarV
       }}
       onDragEnd={() => onArrastar(null)}
     >
-      <BotaoMover
-        $pago={conta.pago}
-        disabled={!conta.editavel || salvando}
-        onClick={onMover}
-        title={conta.pago ? "Marcar como não pago" : "Marcar como pago"}
-        aria-label={conta.pago ? "Marcar como não pago" : "Marcar como pago"}
-      >
-        {conta.pago ? "✓" : "○"}
-      </BotaoMover>
+      {temStatusPago && (
+        <BotaoMover
+          $pago={conta.pago}
+          disabled={!conta.editavel || salvando}
+          onClick={onMover}
+          title={conta.pago ? "Marcar como não pago" : "Marcar como pago"}
+          aria-label={conta.pago ? "Marcar como não pago" : "Marcar como pago"}
+        >
+          {conta.pago ? "✓" : "○"}
+        </BotaoMover>
+      )}
 
       <CardInfo
         onClick={temDetalhe ? () => onAbrirDetalhe(conta.chave) : undefined}
@@ -395,8 +506,9 @@ function CardConta({ conta, arrastando, salvando, onArrastar, onMover, onSalvarV
           {temDetalhe && <span style={{ opacity: 0.5, fontWeight: 400 }}> ›</span>}
         </CardTitulo>
         <CardDetalhe>
-          {conta.vencimento ? `vence ${formatarDataBR(conta.vencimento)} · ` : ""}
-          {conta.detalhe}
+          {conta.tipo === "entrada"
+            ? formatarDataBR(conta.data)
+            : (conta.vencimento ? `vence ${formatarDataBR(conta.vencimento)} · ` : "") + (conta.detalhe || "")}
         </CardDetalhe>
       </CardInfo>
 

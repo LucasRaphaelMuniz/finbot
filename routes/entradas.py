@@ -37,13 +37,25 @@ def criar():
     if dados.get("valor") is None:
         raise AppError("valor é obrigatório.", 400, "campos_obrigatorios")
 
+    # `data` opcional (24/07/2026): o board de /contas cria entrada dentro
+    # do mês que está navegando, não necessariamente hoje — ver
+    # services/entradas.py::registrar_entrada. Sem o campo, cai no DEFAULT
+    # NOW() de sempre (form de Lançamentos, bot).
+    data_str = dados.get("data")
+    data_entrada = None
+    if data_str:
+        try:
+            data_entrada = date.fromisoformat(data_str)
+        except ValueError:
+            raise AppError("data inválida — use o formato YYYY-MM-DD.", 400, "data_invalida")
+
     # `recorrente: true` (migração 023): além de registrar a entrada de
     # agora, cria o modelo em entradas_fixas — o lançador diário repete nos
     # próximos meses no dia informado (default: dia de hoje). A entrada de
     # hoje já nasce vinculada ao modelo (entrada_fixa_id) pra o índice
     # único não deixar o lançador duplicar ainda este mês.
     if dados.get("recorrente"):
-        dia = int(dados.get("dia_lancamento") or date.today().day)
+        dia = int(dados.get("dia_lancamento") or (data_entrada or date.today()).day)
         if not 1 <= dia <= 31:
             raise AppError("dia_lancamento deve estar entre 1 e 31.", 400, "dia_invalido")
         fixa = criar_entrada_fixa(
@@ -51,11 +63,13 @@ def criar():
         )
         entrada = registrar_entrada(
             g.usuario_id, float(dados["valor"]), dados.get("descricao", ""),
-            entrada_fixa_id=fixa["id"],
+            entrada_fixa_id=fixa["id"], data=data_entrada,
         )
         return {**entrada, "entrada_fixa": fixa}, 201
 
-    entrada = registrar_entrada(g.usuario_id, float(dados["valor"]), dados.get("descricao", ""))
+    entrada = registrar_entrada(
+        g.usuario_id, float(dados["valor"]), dados.get("descricao", ""), data=data_entrada,
+    )
     return entrada, 201
 
 

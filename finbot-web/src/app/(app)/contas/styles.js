@@ -206,6 +206,51 @@ export const ItemDetalhe = styled.div`
   }
 `;
 
+export const BotaoNovaEntrada = styled.button`
+  width: 100%;
+  padding: ${({ theme }) => theme.spacing(3)};
+  margin-top: ${({ theme }) => theme.spacing(1)};
+  background: none;
+  border: 1px dashed ${({ theme }) => theme.colors.border};
+  border-radius: ${({ theme }) => theme.radius.md};
+  color: ${({ theme }) => theme.colors.textMuted};
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+
+  &:hover {
+    border-color: ${({ theme }) => theme.colors.primary};
+    color: ${({ theme }) => theme.colors.primary};
+  }
+`;
+
+export const FormNovaEntrada = styled.form`
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: ${({ theme }) => theme.spacing(2)};
+  padding: ${({ theme }) => theme.spacing(3)};
+  margin-top: ${({ theme }) => theme.spacing(1)};
+  background: ${({ theme }) => theme.colors.surfaceAlt};
+  border: 1px solid ${({ theme }) => theme.colors.primary};
+  border-radius: ${({ theme }) => theme.radius.md};
+
+  input[type="text"], input:not([type]) {
+    flex: 1;
+    min-width: 100px;
+  }
+
+  input, button {
+    font-family: inherit;
+    font-size: 13px;
+  }
+`;
+
+export const CampoDia = styled.input`
+  width: 48px;
+  text-align: center;
+`;
+
 export const Resumo = styled.div`
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
