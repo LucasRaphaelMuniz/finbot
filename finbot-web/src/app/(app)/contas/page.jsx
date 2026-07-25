@@ -27,7 +27,7 @@ import {
   Header, Board, Coluna, ColunaHeader, ColunaTitulo, ColunaTotal, Card,
   CardInfo, CardTitulo, CardDetalhe, CardValor, ValorRiscado, BotaoMover, Indicador,
   InputValor, Vazio, Resumo, ListaDetalhe, ItemDetalhe,
-  BotaoNovaEntrada, FormNovaEntrada, CampoDia,
+  BotaoNovaEntrada, FormNovaEntrada, CampoDescricao, CampoDia,
 } from "./styles";
 
 // Mesmo truque de despesas fixas (fixas/page.jsx): dia_lancamento=31 num
@@ -528,7 +528,7 @@ function NovaEntrada({ mes, onCriada, onErro }) {
 
   return (
     <FormNovaEntrada onSubmit={salvar}>
-      <input
+      <CampoDescricao
         placeholder="Descrição" value={descricao} autoFocus
         onChange={(e) => setDescricao(e.target.value)}
       />

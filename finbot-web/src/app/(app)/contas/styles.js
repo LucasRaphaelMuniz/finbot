@@ -253,20 +253,50 @@ export const FormNovaEntrada = styled.form`
   border: 1px solid ${({ theme }) => theme.colors.primary};
   border-radius: ${({ theme }) => theme.radius.md};
 
-  input[type="text"], input:not([type]) {
-    flex: 1;
-    min-width: 100px;
-  }
-
-  input, button {
-    font-family: inherit;
+  button {
     font-size: 13px;
   }
 `;
 
+// Campo de descrição do formulário de nova entrada. Antes era um <input>
+// cru sem styled-component — só herdava font-family/size/color do reset
+// global (global.js só estiliza background/border pra <button>, não pra
+// <input>), então ficava com a caixa branca padrão do navegador destoando
+// do resto do tema escuro (relato do Lucas, 24/07/2026: "sem estilização").
+// Mesmo visual de MoneyInput/styles.js::Input, só que flex em vez de 100%
+// (aqui divide a linha com valor/dia/botões, lá é campo único).
+export const CampoDescricao = styled.input`
+  flex: 1;
+  min-width: 100px;
+  background: ${({ theme }) => theme.colors.surfaceAlt};
+  border: 1px solid ${({ theme }) => theme.colors.border};
+  border-radius: ${({ theme }) => theme.radius.sm};
+  padding: ${({ theme }) => theme.spacing(2.5)} ${({ theme }) => theme.spacing(3)};
+  font-size: 13px;
+  color: ${({ theme }) => theme.colors.text};
+
+  &:focus {
+    outline: none;
+    border-color: ${({ theme }) => theme.colors.primary};
+  }
+`;
+
+// Mesmo problema do CampoDescricao acima: só tinha width/text-align, sem
+// nenhuma cor/fundo/borda própria — caía no input branco padrão do SO.
 export const CampoDia = styled.input`
   width: 48px;
   text-align: center;
+  background: ${({ theme }) => theme.colors.surfaceAlt};
+  border: 1px solid ${({ theme }) => theme.colors.border};
+  border-radius: ${({ theme }) => theme.radius.sm};
+  padding: ${({ theme }) => theme.spacing(2.5)} ${({ theme }) => theme.spacing(1)};
+  font-size: 13px;
+  color: ${({ theme }) => theme.colors.text};
+
+  &:focus {
+    outline: none;
+    border-color: ${({ theme }) => theme.colors.primary};
+  }
 `;
 
 export const Resumo = styled.div`
