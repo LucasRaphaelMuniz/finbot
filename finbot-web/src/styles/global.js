@@ -22,6 +22,37 @@ const GlobalStyle = createGlobalStyle`
     text-decoration: none;
   }
 
+  /* Scrollbar (24/07/2026, pedido do Lucas: "o scroll precisa ter o padrão
+     conforme o resto da página" — não existia NENHUM estilo de scrollbar
+     no projeto até aqui; toda área com overflow (ex: lista do modal de
+     detalhe) caía na barra cinza clara padrão do SO, destoando do tema
+     escuro. Global (não só no modal que motivou o pedido) pra virar de
+     fato "o padrão da página" daqui pra frente, em vez de mais um ponto
+     único que diverge de novo na próxima lista com scroll. */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: ${({ theme }) => theme.colors.border};
+    border-radius: ${({ theme }) => theme.radius.sm};
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: ${({ theme }) => theme.colors.textMuted};
+  }
+
+  /* Firefox não suporta ::-webkit-scrollbar */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: ${({ theme }) => theme.colors.border} transparent;
+  }
+
   button, input, select {
     font-family: inherit;
     font-size: inherit;

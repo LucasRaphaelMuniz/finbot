@@ -25,7 +25,7 @@ import Modal from "@/components/Modal";
 import MoneyInput from "@/components/MoneyInput";
 import {
   Header, Board, Coluna, ColunaHeader, ColunaTitulo, ColunaTotal, Card,
-  CardInfo, CardTitulo, CardDetalhe, CardValor, ValorRiscado, BotaoMover,
+  CardInfo, CardTitulo, CardDetalhe, CardValor, ValorRiscado, BotaoMover, Indicador,
   InputValor, Vazio, Resumo, ListaDetalhe, ItemDetalhe,
   BotaoNovaEntrada, FormNovaEntrada, CampoDia,
 } from "./styles";
@@ -48,6 +48,66 @@ function mesAtualISO() {
 // vendo (ex: revisando julho de propósito, sai da tela, volta: continua em
 // julho, não pula pro mês corrente).
 const CHAVE_ULTIMO_MES = "finbot:contas:ultimo-mes";
+
+// ---------------------------------------------------------------------------
+// Ordem preferida dos cards (pedido do Lucas, 24/07/2026: "quero também
+// poder mover os cards pra deixar na ordem que eu preferir de
+// visualização"). Preferência de TELA, não de dado — guardada só no
+// navegador (localStorage), por mês+coluna. Decisão consciente: não criei
+// tabela/migração nova pra isso. É ordem de exibição, não estado de
+// negócio (diferente de `pago`, que precisa existir no servidor pra
+// resumo.py/dashboard concordarem); duplicar isso no backend agora seria
+// resolver um problema que não apareceu ainda ("preciso ver a mesma ordem
+// no celular e no computador"). Se aparecer, migra pra lá.
+// ---------------------------------------------------------------------------
+
+function chaveOrdemStorage(mesRef, coluna) {
+  return `finbot:contas:ordem:${mesRef}:${coluna}`;
+}
+
+function lerOrdemSalva(mesRef, coluna) {
+  if (typeof window === "undefined") return [];
+  try {
+    const bruto = window.localStorage.getItem(chaveOrdemStorage(mesRef, coluna));
+    const lista = bruto ? JSON.parse(bruto) : [];
+    return Array.isArray(lista) ? lista : [];
+  } catch {
+    return [];
+  }
+}
+
+function salvarOrdemStorage(mesRef, coluna, chaves) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(chaveOrdemStorage(mesRef, coluna), JSON.stringify(chaves));
+}
+
+// Pura, testável isoladamente: aplica a ordem salva por cima da ordem que
+// já veio do backend. Card sem posição salva (conta nova, nunca
+// reordenada) mantém a posição relativa que já tinha, só empurrado pro
+// fim — não "pula" pro topo por não ter preferência registrada ainda.
+function ordenarPorPreferencia(itens, ordemSalva) {
+  if (!itens || itens.length === 0 || !ordemSalva || ordemSalva.length === 0) return itens || [];
+  const posicao = new Map(ordemSalva.map((chave, i) => [chave, i]));
+  return [...itens].sort((a, b) => {
+    const pa = posicao.has(a.chave) ? posicao.get(a.chave) : Infinity;
+    const pb = posicao.has(b.chave) ? posicao.get(b.chave) : Infinity;
+    return pa - pb;
+  });
+}
+
+// "entrada:9" -> "entrada". Decide se uma coluna aceita o card largado
+// nela — impede que um gasto arrastado sem querer pra dentro da coluna
+// Entradas (ou vice-versa) tente aplicar status de pago numa entrada
+// (rejeitado com 400 pelo backend) ou vire uma entrada fantasma na lista
+// de não-pagos.
+function tipoDaChave(chave) {
+  return (chave || "").split(":")[0];
+}
+function colunaAceitaChave(coluna, chave) {
+  return coluna === "entradas"
+    ? tipoDaChave(chave) === "entrada"
+    : tipoDaChave(chave) !== "entrada";
+}
 
 export default function ContasPage() {
   // Começa sempre com o mês atual — igual no servidor (SSR) e no 1º render
@@ -77,9 +137,20 @@ export default function ContasPage() {
 
   const [toast, setToast] = useState(null);
   const [arrastando, setArrastando] = useState(null); // chave do card em voo
-  const [colunaAlvo, setColunaAlvo] = useState(null); // "a_pagar" | "pagas"
+  const [colunaAlvo, setColunaAlvo] = useState(null); // "entradas" | "a_pagar" | "pagas"
   const [salvando, setSalvando] = useState(null);
   const [detalheChave, setDetalheChave] = useState(null); // fatura aberta no modal
+
+  // Ordem preferida de cada coluna (ver bloco de comentário acima) — recarrega
+  // do localStorage sempre que troca de mês, porque a preferência é por mês.
+  const [ordens, setOrdens] = useState({ entradas: [], a_pagar: [], pagas: [] });
+  useEffect(() => {
+    setOrdens({
+      entradas: lerOrdemSalva(mes, "entradas"),
+      a_pagar: lerOrdemSalva(mes, "a_pagar"),
+      pagas: lerOrdemSalva(mes, "pagas"),
+    });
+  }, [mes]);
 
   function avisar(mensagem, tipo = "sucesso") {
     setToast({ mensagem, tipo });
@@ -121,28 +192,55 @@ export default function ContasPage() {
     }
   }
 
-  // Drag nativo do HTML5 (sem dependência nova). Só funciona com mouse — em
-  // toque o caminho é o BotaoMover de cada card, que faz exatamente a mesma
-  // chamada. Decisão consciente: @dnd-kit resolveria o toque, mas é uma
-  // dependência a mais pra um gesto que já tem um equivalente acessível.
-  function aoSoltar(coluna) {
-    return (e) => {
-      e.preventDefault();
-      setColunaAlvo(null);
-      const chave = e.dataTransfer.getData("text/plain") || arrastando;
-      setArrastando(null);
-      if (!chave) return;
+  const dadosExibidos = local;
+  const totais = dadosExibidos?.totais;
 
+  // Ordem de exibição = ordem do backend, com a preferência salva aplicada
+  // por cima (ver ordenarPorPreferencia). Recalculado a cada render — as
+  // listas são pequenas (dezenas de cards, não milhares), não vale a pena
+  // memoizar às custas de mais uma dependência pra manter sincronizada.
+  const entradasOrdenadas = ordenarPorPreferencia(dadosExibidos?.entradas, ordens.entradas);
+  const aPagarOrdenadas = ordenarPorPreferencia(dadosExibidos?.a_pagar, ordens.a_pagar);
+  const pagasOrdenadas = ordenarPorPreferencia(dadosExibidos?.pagas, ordens.pagas);
+
+  // Handler único pro arraste — usado tanto ao soltar no fundo vazio de uma
+  // coluna (chaveAlvo=null, vai pro fim) quanto ao soltar EM CIMA de outro
+  // card (chaveAlvo=a chave dele, entra antes/depois conforme a metade em
+  // que soltou). Reordenar é sempre local (localStorage); só dispara
+  // `mover()` pro servidor quando a coluna de destino é diferente da atual
+  // do card — mesma regra de sempre, só que agora reaproveitada nos dois
+  // caminhos de soltar (fundo da coluna e em cima de um card).
+  function soltar(coluna, chaveArrastada, chaveAlvo, depoisDoAlvo) {
+    if (!chaveArrastada || chaveArrastada === chaveAlvo) return;
+    if (!colunaAceitaChave(coluna, chaveArrastada)) return;
+
+    const listaAtual = coluna === "entradas" ? entradasOrdenadas
+      : coluna === "a_pagar" ? aPagarOrdenadas
+      : pagasOrdenadas;
+
+    const chavesDestino = listaAtual.map((c) => c.chave).filter((k) => k !== chaveArrastada);
+    let indice = chaveAlvo ? chavesDestino.indexOf(chaveAlvo) : chavesDestino.length;
+    if (indice === -1) indice = chavesDestino.length;
+    if (chaveAlvo && depoisDoAlvo) indice += 1;
+    chavesDestino.splice(indice, 0, chaveArrastada);
+
+    setOrdens((atual) => ({ ...atual, [coluna]: chavesDestino }));
+    salvarOrdemStorage(mes, coluna, chavesDestino);
+
+    if (coluna !== "entradas") {
       const conta = [...(local?.a_pagar || []), ...(local?.pagas || [])]
-        .find((c) => c.chave === chave);
-      if (!conta) return;
-
+        .find((c) => c.chave === chaveArrastada);
       const querPago = coluna === "pagas";
-      if (conta.pago === querPago) return; // soltou na coluna de origem
-      mover(conta, querPago);
-    };
+      if (conta && conta.pago !== querPago) mover(conta, querPago);
+    }
   }
 
+  // Drag nativo do HTML5 (sem dependência nova). Só funciona com mouse — em
+  // toque o caminho é o BotaoMover de cada card, que faz exatamente a mesma
+  // chamada pra status; reordenar por toque não tem equivalente ainda (ver
+  // nota na próxima seção). Decisão consciente: @dnd-kit resolveria o
+  // toque, mas é uma dependência a mais pra um gesto que hoje só falta no
+  // celular, não no uso principal (desktop).
   function propsColuna(coluna) {
     return {
       onDragOver: (e) => {
@@ -150,13 +248,16 @@ export default function ContasPage() {
         setColunaAlvo(coluna);
       },
       onDragLeave: () => setColunaAlvo((atual) => (atual === coluna ? null : atual)),
-      onDrop: aoSoltar(coluna),
+      onDrop: (e) => {
+        e.preventDefault();
+        setColunaAlvo(null);
+        const chave = e.dataTransfer.getData("text/plain") || arrastando;
+        setArrastando(null);
+        soltar(coluna, chave, null, false); // sem alvo = solta no fim da coluna
+      },
       $alvo: colunaAlvo === coluna && arrastando !== null,
     };
   }
-
-  const dadosExibidos = local;
-  const totais = dadosExibidos?.totais;
 
   return (
     <div>
@@ -192,24 +293,26 @@ export default function ContasPage() {
           </Resumo>
 
           <Board>
-            <Coluna>
+            <Coluna {...propsColuna("entradas")}>
               <ColunaHeader>
                 <ColunaTitulo>Entradas</ColunaTitulo>
                 <ColunaTotal $tom="sucesso">{brl(totais.entradas)}</ColunaTotal>
               </ColunaHeader>
-              {dadosExibidos.entradas.length === 0 ? (
+              {entradasOrdenadas.length === 0 ? (
                 <Vazio>Nenhuma entrada lançada neste mês.</Vazio>
               ) : (
-                dadosExibidos.entradas.map((e) => (
+                entradasOrdenadas.map((e) => (
                   <CardConta
                     key={e.chave}
                     conta={e}
-                    arrastando={false}
+                    arrastando={arrastando === e.chave}
                     salvando={salvando === e.chave}
-                    onArrastar={() => {}}
+                    onArrastar={setArrastando}
                     onMover={() => {}}
                     onSalvarValor={(v) => salvarValor(e, v)}
                     onAbrirDetalhe={() => {}}
+                    onSoltarSobre={(chaveAlvo, chaveArrastada, depois) =>
+                      soltar("entradas", chaveArrastada, chaveAlvo, depois)}
                   />
                 ))
               )}
@@ -221,10 +324,10 @@ export default function ContasPage() {
                 <ColunaTitulo>Não pagos</ColunaTitulo>
                 <ColunaTotal $tom="erro">{brl(totais.a_pagar)}</ColunaTotal>
               </ColunaHeader>
-              {dadosExibidos.a_pagar.length === 0 ? (
+              {aPagarOrdenadas.length === 0 ? (
                 <Vazio>Tudo pago neste mês.</Vazio>
               ) : (
-                dadosExibidos.a_pagar.map((c) => (
+                aPagarOrdenadas.map((c) => (
                   <CardConta
                     key={c.chave}
                     conta={c}
@@ -234,6 +337,8 @@ export default function ContasPage() {
                     onMover={() => mover(c, true)}
                     onSalvarValor={(v) => salvarValor(c, v)}
                     onAbrirDetalhe={setDetalheChave}
+                    onSoltarSobre={(chaveAlvo, chaveArrastada, depois) =>
+                      soltar("a_pagar", chaveArrastada, chaveAlvo, depois)}
                   />
                 ))
               )}
@@ -244,10 +349,10 @@ export default function ContasPage() {
                 <ColunaTitulo>Pagos</ColunaTitulo>
                 <ColunaTotal $tom="sucesso">{brl(totais.pago)}</ColunaTotal>
               </ColunaHeader>
-              {dadosExibidos.pagas.length === 0 ? (
+              {pagasOrdenadas.length === 0 ? (
                 <Vazio>Arraste uma conta para cá quando pagar.</Vazio>
               ) : (
-                dadosExibidos.pagas.map((c) => (
+                pagasOrdenadas.map((c) => (
                   <CardConta
                     key={c.chave}
                     conta={c}
@@ -257,6 +362,8 @@ export default function ContasPage() {
                     onMover={() => mover(c, false)}
                     onSalvarValor={(v) => salvarValor(c, v)}
                     onAbrirDetalhe={setDetalheChave}
+                    onSoltarSobre={(chaveAlvo, chaveArrastada, depois) =>
+                      soltar("pagas", chaveArrastada, chaveAlvo, depois)}
                   />
                 ))
               )}
@@ -436,17 +543,21 @@ function NovaEntrada({ mes, onCriada, onErro }) {
   );
 }
 
-function CardConta({ conta, arrastando, salvando, onArrastar, onMover, onSalvarValor, onAbrirDetalhe }) {
+function CardConta({
+  conta, arrastando, salvando, onArrastar, onMover, onSalvarValor, onAbrirDetalhe, onSoltarSobre,
+}) {
   const [editando, setEditando] = useState(false);
   const [texto, setTexto] = useState("");
   const temDetalhe = conta.tipo === "fatura"; // só fatura resume N gastos por trás
   // Entrada não tem status de pago (dinheiro que entra não fica "a pagar")
   // — services/contas_mes.py::marcar_conta rejeita essa chave com 400, então
-  // nem oferece o botão/arraste aqui: não é um controle desabilitado à toa,
-  // é um controle que não existe pra esse tipo.
+  // nem oferece o botão aqui: não é um controle desabilitado à toa, é um
+  // controle que não existe pra esse tipo. Isso NÃO impede arrastar — só
+  // impede que arrastar mude status; reordenar (pedido do Lucas, 24/07/2026)
+  // vale pra qualquer card, entrada inclusive.
   const temStatusPago = conta.tipo !== "entrada";
 
-  const arrastavel = temStatusPago && conta.editavel && !salvando;
+  const arrastavel = conta.editavel && !salvando;
   // Numa fatura, o valor só vira editável DEPOIS de paga: antes disso o
   // número exibido é a soma real dos lançamentos, e "quanto pretendo pagar"
   // não é um dado (o backend recusa com 409 — services/contas_mes.py).
@@ -483,16 +594,32 @@ function CardConta({ conta, arrastando, salvando, onArrastar, onMover, onSalvarV
         onArrastar(conta.chave);
       }}
       onDragEnd={() => onArrastar(null)}
+      // Soltar EM CIMA de outro card reordena (em vez de só ir pro fundo
+      // da coluna, que é o que o onDrop da Coluna já cobria). stopPropagation
+      // pra não disparar os dois handlers pro mesmo gesto — sem isso, o
+      // drop seria tratado 2x (reordenar aqui E "soltar no fundo" na Coluna).
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const chaveArrastada = e.dataTransfer.getData("text/plain");
+        if (!chaveArrastada || chaveArrastada === conta.chave) return;
+        const rect = e.currentTarget.getBoundingClientRect();
+        const depois = e.clientY > rect.top + rect.height / 2;
+        onSoltarSobre(conta.chave, chaveArrastada, depois);
+      }}
     >
       {temStatusPago && (
         <BotaoMover
-          $pago={conta.pago}
           disabled={!conta.editavel || salvando}
           onClick={onMover}
           title={conta.pago ? "Marcar como não pago" : "Marcar como pago"}
           aria-label={conta.pago ? "Marcar como não pago" : "Marcar como pago"}
         >
-          {conta.pago ? "✓" : "○"}
+          <Indicador $pago={conta.pago}>{conta.pago ? "✓" : ""}</Indicador>
         </BotaoMover>
       )}
 

@@ -146,24 +146,41 @@ export const BotaoMover = styled.button`
   flex-shrink: 0;
   width: 30px;
   height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border-radius: ${({ theme }) => theme.radius.sm};
   border: 1px solid ${({ theme }) => theme.colors.border};
   background: ${({ theme }) => theme.colors.surface};
-  color: ${({ theme, $pago }) =>
-    $pago ? theme.colors.success : theme.colors.textMuted};
-  font-size: 14px;
-  line-height: 1;
   cursor: pointer;
 
   &:hover:not(:disabled) {
     border-color: ${({ theme }) => theme.colors.primary};
-    color: ${({ theme }) => theme.colors.primary};
   }
 
   &:disabled {
     opacity: 0.4;
     cursor: not-allowed;
   }
+`;
+
+// Bolinha preenchida dentro do BotaoMover (pedido do Lucas, 24/07/2026):
+// vermelha vazia em não pago, verde com check branco em pago — em vez do
+// glifo de texto solto (○/✓) que tinha antes, que dependia da fonte do SO
+// pra parecer alguma coisa e ficava pequeno/apagado. Elemento próprio (não
+// glifo) dá controle real de tamanho/cor, igual qualquer badge de status.
+export const Indicador = styled.span`
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: ${({ theme, $pago }) => ($pago ? theme.colors.success : theme.colors.danger)};
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
 `;
 
 export const InputValor = styled.input`

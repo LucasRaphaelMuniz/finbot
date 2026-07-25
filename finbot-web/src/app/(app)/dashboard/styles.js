@@ -72,3 +72,45 @@ export const TextoMuted = styled.div`
   color: ${({ theme }) => theme.colors.textMuted};
   margin-top: 2px;
 `;
+
+// Linha clicável de forma de pagamento (24/07/2026, pedido do Lucas: "abre
+// primeiro pela forma de pagamento, clicar expande o detalhamento"). Usa
+// <button> de propósito (não div+onClick) — foco por teclado e semântica
+// de "isto é acionável" de graça.
+export const GrupoForma = styled.button`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: ${({ theme }) => theme.spacing(3)};
+  padding: ${({ theme }) => theme.spacing(3)} 0;
+  border: none;
+  border-bottom: 1px solid ${({ theme }) => theme.colors.border};
+  background: none;
+  color: ${({ theme }) => theme.colors.text};
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+
+  &:hover {
+    color: ${({ theme }) => theme.colors.primary};
+  }
+`;
+
+// Item dentro de um grupo expandido — mesmo desenho de ItemDetalhe, só
+// recuado e sem borda própria (a borda de baixo do grupo/último item já
+// separa visualmente do próximo grupo).
+export const ItemAninhado = styled.div`
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: ${({ theme }) => theme.spacing(3)};
+  padding: ${({ theme }) => theme.spacing(2)} 0 ${({ theme }) => theme.spacing(2)} ${({ theme }) => theme.spacing(5)};
+  font-size: 13px;
+
+  &:last-child {
+    border-bottom: 1px solid ${({ theme }) => theme.colors.border};
+  }
+`;

@@ -3,7 +3,7 @@
 // app/(app)/dashboard/page.jsx — resumo analítico, só leitura (Fase 5.2 do
 // PLANO_EXECUCAO.md). Tudo vem de 1 request (GET /api/resumo) — agregação
 // roda no Flask (services/resumo.py), não no browser (decisão D6).
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useApi } from "@/hooks/useApi";
 import { brl, formatarCompetencia, formatarDataBR } from "@/utils/format";
 import StatCard from "@/components/StatCard";
@@ -15,7 +15,7 @@ import Loading from "@/components/Loading";
 import Modal from "@/components/Modal";
 import {
   Header, StatsRow, ChartsGrid, ChartCard, ChartTitulo,
-  ListaDetalhe, ItemDetalhe, TextoMuted,
+  ListaDetalhe, ItemDetalhe, TextoMuted, GrupoForma, ItemAninhado,
 } from "./styles";
 
 function mesAtualISO() {
@@ -143,6 +143,23 @@ export default function DashboardPage() {
 // somado no front a partir dos itens, não lido de `dados.total`.
 // ---------------------------------------------------------------------------
 
+// Agrupa por forma de pagamento (pedido do Lucas, 24/07/2026: "quero que
+// apareça primeiro pela forma de pagamento"). Função pura — só reorganiza
+// o que /api/gastos já devolve, nenhum cálculo novo no backend. Ordenado
+// por total decrescente: a forma que mais pesou no mês aparece primeiro,
+// que é a pergunta mais provável ("no que eu mais gastei").
+function agruparPorForma(itens) {
+  const grupos = new Map();
+  for (const item of itens) {
+    const nome = item.forma_nome || "Sem forma de pagamento";
+    if (!grupos.has(nome)) grupos.set(nome, { nome, total: 0, itens: [] });
+    const grupo = grupos.get(nome);
+    grupo.total += Number(item.valor);
+    grupo.itens.push(item);
+  }
+  return [...grupos.values()].sort((a, b) => b.total - a.total);
+}
+
 function DetalheMes({ detalhe, onFechar }) {
   const { tipo, mes } = detalhe || {};
   const url = tipo === "gastos" ? (mes ? `/gastos?mes=${mes}&per_page=200` : null)
@@ -150,37 +167,77 @@ function DetalheMes({ detalhe, onFechar }) {
     : null;
   const { dados, loading } = useApi(url, { skip: !url });
 
+  // Fecha os grupos toda vez que abre um mês/tipo diferente — expandido de
+  // um clique anterior não devia vazar pro próximo popup.
+  const [expandidos, setExpandidos] = useState(() => new Set());
+  useEffect(() => setExpandidos(new Set()), [tipo, mes]);
+
+  function alternar(nomeForma) {
+    setExpandidos((atual) => {
+      const novo = new Set(atual);
+      novo.has(nomeForma) ? novo.delete(nomeForma) : novo.add(nomeForma);
+      return novo;
+    });
+  }
+
   const itens = dados?.itens || [];
   const totalItens = itens.reduce((s, item) => s + Number(item.valor), 0);
   const titulo = mes
     ? `${tipo === "gastos" ? "Gastos" : "Entradas"} — ${formatarCompetencia(`${mes}-01`)}`
     : "";
+  const grupos = tipo === "gastos" ? agruparPorForma(itens) : null;
 
   return (
-    <Modal aberto={!!detalhe} titulo={titulo} onFechar={onFechar}>
+    // Largura maior que o padrão do Modal (480px): com data + categoria +
+    // forma na mesma linha, o texto cortava contra o valor à direita
+    // (relato do Lucas, print do popup de julho/2026).
+    <Modal aberto={!!detalhe} titulo={titulo} onFechar={onFechar} largura="min(640px, 92vw)">
       {loading || !dados ? (
         <Loading />
       ) : itens.length === 0 ? (
         <TextoMuted>Nenhum lançamento neste mês.</TextoMuted>
+      ) : grupos ? (
+        <>
+          <ListaDetalhe>
+            {grupos.map((grupo) => (
+              <div key={grupo.nome}>
+                <GrupoForma type="button" onClick={() => alternar(grupo.nome)}>
+                  <span>{expandidos.has(grupo.nome) ? "▾" : "▸"} {grupo.nome}</span>
+                  <span>{brl(grupo.total)}</span>
+                </GrupoForma>
+                {expandidos.has(grupo.nome) && grupo.itens.map((item) => (
+                  <ItemAninhado key={item.id}>
+                    <div>
+                      <div>
+                        {item.descricao || "(sem descrição)"}
+                        {item.projetado ? " · previsto" : ""}
+                      </div>
+                      <TextoMuted>
+                        {formatarDataBR(item.data)}
+                        {item.categoria_nome ? ` · ${item.categoria_nome}` : ""}
+                      </TextoMuted>
+                    </div>
+                    <span>{brl(item.valor)}</span>
+                  </ItemAninhado>
+                ))}
+              </div>
+            ))}
+          </ListaDetalhe>
+          <ItemDetalhe style={{ fontWeight: 600, marginTop: 8 }}>
+            <span>Total</span>
+            <span>{brl(totalItens)}</span>
+          </ItemDetalhe>
+        </>
       ) : (
+        // Entrada não tem forma de pagamento (não é uma compra, é dinheiro
+        // caindo na conta) — segue lista simples, sem agrupamento.
         <>
           <ListaDetalhe>
             {itens.map((item) => (
               <ItemDetalhe key={item.id}>
                 <div>
-                  <div>
-                    {item.descricao || "(sem descrição)"}
-                    {/* Linha sintética de fixa ainda não lançada pelo cron
-                        (services/gastos.py::projetar_despesas_fixas) — só
-                        aparece em mês corrente/futuro, tem id tipo
-                        "projetado-fixa-N-mes" em vez de numérico. */}
-                    {item.projetado ? " · previsto" : ""}
-                  </div>
-                  <TextoMuted>
-                    {formatarDataBR(item.data)}
-                    {item.categoria_nome ? ` · ${item.categoria_nome}` : ""}
-                    {item.forma_nome ? ` · ${item.forma_nome}` : ""}
-                  </TextoMuted>
+                  <div>{item.descricao || "(sem descrição)"}</div>
+                  <TextoMuted>{formatarDataBR(item.data)}</TextoMuted>
                 </div>
                 <span>{brl(item.valor)}</span>
               </ItemDetalhe>
