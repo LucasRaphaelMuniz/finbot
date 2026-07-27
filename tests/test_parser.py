@@ -70,3 +70,42 @@ def test_palavra_numerica_mil():
 
 def test_valor_nao_encontrado():
     assert extrair_valor("não tem número nenhum aqui") is None
+
+
+# ---------------------------------------------------------------------------
+# 24/07/2026 — telefone/CPF/CNPJ no meio da frase não pode virar "valor".
+# Bug real: "adiciona a pessoa com o numero 44999999999" virava um gasto de
+# R$ 44.999.999.999,00 e nunca chegava a ser classificado como comando pela
+# IA (extrair_valor != None sequestra a mensagem pro fluxo de gasto antes
+# do fallback de IA rodar — ver handler.py:_processar_input_livre).
+# ---------------------------------------------------------------------------
+
+def test_telefone_no_meio_da_frase_nao_vira_valor():
+    assert extrair_valor("adiciona a pessoa teste com o numero 44999999999") is None
+
+
+def test_cpf_no_meio_da_frase_nao_vira_valor():
+    assert extrair_valor("meu cpf é 12345678901") is None
+
+
+def test_cnpj_no_meio_da_frase_nao_vira_valor():
+    assert extrair_valor("cnpj 12345678000199") is None
+
+
+def test_valor_de_sete_digitos_ainda_e_aceito():
+    # Limite exato: 7 dígitos sem separador ainda é um valor plausível
+    # (R$ 1.234.567) — não pode regredir o caso já coberto por
+    # test_valor_muitos_digitos_sem_pontuacao.
+    assert extrair_valor("1234567") == 1234567.0
+
+
+def test_valor_real_apos_numero_longo_na_mesma_frase_ainda_e_encontrado():
+    # finditer (não só o 1º match): um número implausível cedo na frase não
+    # pode engolir um valor de verdade que apareça depois.
+    assert extrair_valor("numero 44999999999, gastei 50 reais no mercado") == 50.0
+
+
+def test_valor_com_separador_grande_continua_aceito_mesmo_longo():
+    # Com vírgula/ponto de verdade (intenção monetária clara), não aplica o
+    # limite de dígitos — só a heurística D1 de decimal vs. milhar.
+    assert extrair_valor("12.345.678,90") == 12345678.90

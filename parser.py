@@ -33,6 +33,18 @@ def eh_entrada(texto: str) -> bool:
 
 _VALOR_RE = re.compile(r"R?\$?\s*(\d+(?:[.,]\d+)*)", re.IGNORECASE)
 
+# Tamanho máximo de uma sequência de dígitos SEM separador nenhum (nem
+# ponto, nem vírgula) pra ainda ser aceita como valor em reais plausível.
+# Acima disso é quase certeza de ser outra coisa digitada no meio da frase —
+# telefone (10-11 dígitos), CPF (11), CNPJ (14) — ninguém digita um gasto de
+# R$ 44.999.999.999,00 sem separador de milhar. Bug real (24/07/2026): "como
+# adiciono... com o numero 44999999999" virava esse "valor", sequestrando a
+# mensagem inteira pro fluxo de gasto ANTES de extrair_valor sequer devolver
+# None — que é a condição que faz handler.py cair no fallback de IA (onde
+# 'comando'/'pergunta' são decididos). 7 dígitos cobre o teste existente de
+# valor grande sem pontuação (R$ 1.234.567) sem abrir brecha pra 10+ dígitos.
+_MAX_DIGITOS_VALOR_SEM_SEPARADOR = 7
+
 # Palavras numéricas → valor
 _UNIDADES = {
     "um": 1, "uma": 1, "dois": 2, "duas": 2,
@@ -139,11 +151,22 @@ def extrair_valor(texto: str) -> float | None:
     """
     Retorna float ou None.
     Aceita: '50', '50,90', 'R$ 50', '1.103,04', 'cem', 'cinquenta reais', 'cento e vinte'.
+
+    Ignora sequências de dígitos cruas (sem ponto/vírgula) implausivelmente
+    longas pra ser um valor em reais — ver _MAX_DIGITOS_VALOR_SEM_SEPARADOR.
+    `finditer` (não só o 1º match) pra não perder um valor de verdade que
+    apareça DEPOIS de um número desses na mesma frase.
     """
     # 1) Dígitos (padrão original)
-    m = _VALOR_RE.search(texto)
-    if m:
-        return _normalizar_numero_br(m.group(1))
+    for m in _VALOR_RE.finditer(texto):
+        bruto = m.group(1)
+        bare_longo_demais = (
+            "." not in bruto and "," not in bruto
+            and len(bruto) > _MAX_DIGITOS_VALOR_SEM_SEPARADOR
+        )
+        if bare_longo_demais:
+            continue
+        return _normalizar_numero_br(bruto)
 
     # 2) Palavras numéricas em português
     return _palavras_para_numero(texto)
