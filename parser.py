@@ -347,6 +347,87 @@ def extrair_forma_pagamento(texto: str, formas: list):
 
 
 # ---------------------------------------------------------------------------
+# Comando em linguagem natural COM número no meio (24/07/2026)
+#
+# Bug real (print do Lucas): "Adiciona a forma de pgto teste com limite de
+# 2999" caiu no menu "Qual a forma de pagamento?", como se fosse um gasto de
+# R$ 2.999,00. Mesma classe do bug do telefone (44999999999) corrigido antes,
+# mas o corte por quantidade de dígitos NÃO resolve este: 2999 é um número
+# perfeitamente plausível como valor de gasto — o que denuncia que não é
+# gasto é a ESTRUTURA da frase, não a magnitude do número.
+#
+# handler.py:_processar_input_livre só consulta a IA quando extrair_valor
+# devolve None. Achando qualquer número, assume gasto e nunca dá à IA a
+# chance de ver que era um comando. Este filtro é o sinal barato (sem LLM)
+# de "espera, isso tem cara de ordem, não de gasto" — verbo de ação +
+# substantivo do domínio do bot na mesma frase.
+#
+# Exige os DOIS de propósito. Só o verbo daria falso positivo em
+# "adiciona 50 no mercado" (gasto legítimo); só o substantivo daria em
+# "50 no cartão da categoria mercado". Juntos, o padrão é bem específico:
+# ninguém escreve um gasto como "adiciona a forma X com limite Y".
+# ---------------------------------------------------------------------------
+
+_VERBOS_ACAO = (
+    "adiciona", "adicione", "adicionar", "acrescenta", "acrescentar",
+    "cria", "crie", "criar", "cadastra", "cadastre", "cadastrar",
+    "remove", "remova", "remover", "exclui", "exclua", "excluir",
+    "deleta", "delete", "deletar", "apaga", "apague", "apagar",
+    "tira", "tire", "tirar", "altera", "altere", "alterar",
+    "muda", "mude", "mudar", "atualiza", "atualize", "atualizar",
+    "define", "defina", "definir", "coloca", "coloque", "colocar",
+    "aumenta", "aumente", "aumentar", "diminui", "diminua", "diminuir",
+    "vincula", "vincule", "vincular", "convida", "convide", "convidar",
+    "lista", "liste", "listar", "mostra", "mostre", "mostrar",
+    "configura", "configure", "configurar", "renomeia", "renomear",
+)
+
+# Substantivos que só fazem sentido falando DO BOT, não de uma compra.
+# "cartão"/"mercado"/"pix" ficam FORA de propósito — são nomes de forma e
+# categoria, apareceriam em gasto legítimo o tempo todo.
+_SUBSTANTIVOS_DOMINIO = (
+    "grupo", "membro", "participante",
+    "forma de pagamento", "forma de pgto", "formas de pagamento",
+    "categoria", "categorias",
+    "despesa fixa", "despesas fixas", "conta fixa", "custo fixo",
+    "limite", "apelido",
+)
+
+
+def parece_comando_natural(texto: str) -> bool:
+    """
+    True quando a frase tem estrutura de ORDEM sobre o próprio bot (verbo de
+    ação + substantivo do domínio), mesmo contendo um número que o
+    extrair_valor aceitaria como valor.
+
+    Usado por handler.py pra consultar a IA ANTES de assumir gasto. Só um
+    palpite barato: quem decide de fato é a IA (services/ai_fallback.py), e
+    se ela não reconhecer um comando, o fluxo de gasto segue normal — um
+    falso positivo aqui custa 1 chamada de LLM, não um registro errado.
+    """
+    txt = _sem_acento((texto or "").strip().lower())
+    if not txt:
+        return False
+
+    # "forma de pgto" etc. são multi-palavra: checa por substring. Verbo
+    # checa por token inteiro pra "criar" não casar dentro de outra palavra.
+    tokens = set(re.split(r"\W+", txt))
+    tem_verbo = any(v in tokens for v in _VERBOS_ACAO)
+    if not tem_verbo:
+        return False
+
+    # "forma" sozinha é ambígua demais ("forma de pagamento" não, mas o
+    # usuário pode escrever só "forma"): aceita a palavra isolada só quando
+    # o verbo já apareceu, que é o caso aqui.
+    tem_substantivo = (
+        any(s in txt for s in _SUBSTANTIVOS_DOMINIO)
+        or "forma" in tokens
+        or "fixa" in tokens
+    )
+    return tem_substantivo
+
+
+# ---------------------------------------------------------------------------
 # Filtro barato pra mensagens de grupo real do WhatsApp (Fase 7.4)
 # ---------------------------------------------------------------------------
 

@@ -68,6 +68,7 @@ from parser import (
     extrair_forma_pagamento,
     extrair_parcelas,
     eh_entrada,
+    parece_comando_natural,
 )
 from comandos import cmd_saldo, cmd_resumo, cmd_limite, cmd_ajuda, cmd_gastos
 
@@ -438,6 +439,21 @@ def _processar_input_livre(uid: int, mensagem: str) -> str:
     if valor is None:
         return _tentar_fallback_ia(uid, mensagem)
 
+    # 24/07/2026 — a frase TEM número, mas tem cara de ordem sobre o bot
+    # ("adiciona a forma de pgto teste com limite de 2999"). Sem este
+    # desvio, qualquer número na frase sequestrava a mensagem pro fluxo de
+    # gasto e a IA nunca era consultada (bug do print do Lucas: caiu no
+    # menu "Qual a forma de pagamento?" em vez de criar a forma).
+    #
+    # Só desvia quando a IA CONFIRMA que é comando — se ela discordar,
+    # segue o fluxo de gasto normal logo abaixo, com o valor que o regex
+    # já extraiu (determinístico, não a suposição da IA). O custo de um
+    # falso positivo do filtro é 1 chamada de LLM, não um registro errado.
+    if parece_comando_natural(mensagem):
+        resposta_comando = _tentar_comando_natural(uid, mensagem)
+        if resposta_comando is not None:
+            return resposta_comando
+
     # Entrada/receita (Fase 3.5) — checado antes do fluxo de gasto: entrada
     # não precisa de categoria/forma, então não faz sentido cair no menu
     # guiado de gasto por faltar uma delas.
@@ -509,6 +525,33 @@ def _processar_input_livre(uid: int, mensagem: str) -> str:
 # Fallback de IA (Fase 3.6) — mensagem sem comando reconhecido e sem valor
 # extraído pelo parser regex.
 # ---------------------------------------------------------------------------
+
+def _tentar_comando_natural(uid: int, mensagem: str) -> str | None:
+    """
+    Consulta a IA especificamente pra "isso é um comando?", num caso onde o
+    fluxo normal já teria decidido que é gasto (parser achou um número).
+
+    Retorna None quando a IA NÃO reconhece um comando — sinal pra quem
+    chama seguir com o fluxo de gasto original. Só a intenção 'comando'
+    desvia: 'gasto' é deliberadamente ignorado aqui porque o caminho
+    determinístico logo abaixo já extraiu o valor por regex e faz o
+    trabalho melhor (a IA só seria consultada pra isso se o regex tivesse
+    falhado, que é o caso de `_tentar_fallback_ia`).
+    """
+    categorias = get_categorias(uid)
+    formas     = get_formas_pagamento(uid)
+    resultado  = interpretar_mensagem(mensagem, categorias, formas)
+
+    if resultado.get("intencao") == "comando":
+        return _propor_confirmacao_comando(uid, resultado)
+
+    # 'pergunta' também vale desviar: "como eu crio uma categoria?" tem
+    # verbo + substantivo do domínio e pode ter número solto na frase.
+    if resultado.get("intencao") == "pergunta":
+        return f"💬 _Resposta da IA_\n\n{resultado['resposta']}"
+
+    return None
+
 
 def _tentar_fallback_ia(uid: int, mensagem: str) -> str:
     """
