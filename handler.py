@@ -52,6 +52,7 @@ from services.entradas import (
 from services.ai_fallback import interpretar_mensagem, completar_categoria_forma
 from services.grupos import adicionar_membro as adicionar_membro_com_limite
 from utils.app_error import AppError
+from utils.respostas import eh_afirmativo, eh_negativo
 from utils.telefone import normalizar as _normalizar_telefone
 from sessao import (
     get_sessao_ativa,
@@ -194,6 +195,11 @@ def _despachar_comando(uid: int, mensagem: str) -> str | None:
 # Onboarding — setup guiado para novos usuários
 # ---------------------------------------------------------------------------
 
+# Mantido só como referência histórica do que era aceito antes — a checagem
+# real agora é `eh_negativo` (utils/respostas.py), que cobre este conjunto e
+# muito mais ("nem", "deixa", "depois", "👎"...). O onboarding é o primeiro
+# contato da pessoa com o bot; travar num "pular" não reconhecido ali é o
+# pior lugar possível pra ter atrito.
 _NAO = {"nao", "não", "n", "no", "não quero", "nao quero", "pular", "skip"}
 
 
@@ -239,7 +245,7 @@ def _processar_onboarding(uid: int, sessao: dict, mensagem: str) -> str:
         gid = dados.get("grupo_id")
         membros = dados.get("membros", 0)
 
-        if lower in _NAO:
+        if eh_negativo(lower):
             # Avança para formas de pagamento
             atualizar_sessao(
                 uid, etapa="onboarding_forma",
@@ -279,7 +285,7 @@ def _processar_onboarding(uid: int, sessao: dict, mensagem: str) -> str:
         gid   = dados.get("grupo_id")
         formas = dados.get("formas", 0)
 
-        if lower in _NAO:
+        if eh_negativo(lower):
             if formas == 0:
                 # Nenhuma forma adicionada → restaura padrão
                 restaurar_formas_padrao_grupo(uid, gid)
@@ -455,23 +461,33 @@ def _processar_input_livre(uid: int, mensagem: str) -> str:
     # alias, mas é claramente Farmácia). Só chama IA pro que faltou —
     # completar_categoria_forma nunca chama se os dois já foram achados
     # (esse caso já retornou acima).
-    #
-    # Trade-off consciente: se a IA completar OS DOIS agora (o valor já é
-    # certo por regex, só faltava classificar), pede confirmação antes de
-    # gravar — mesmo padrão do fallback completo (_propor_confirmacao_ia),
-    # nunca grava dedução de IA sem o usuário confirmar. Se só sobrar UM
-    # dos dois em aberto mesmo depois da IA tentar, cai no menu guiado como
-    # já acontecia — e o campo que a IA já resolveu entra pré-preenchido
-    # SEM confirmação separada (mesmo nível de confiança que um casamento
-    # por palavra-chave já tinha antes: aparece no "✅ Registrado..." final,
-    # corrigível via *editar ultimo*/*excluir ultimo* se a IA errou).
     categoria, forma = completar_categoria_forma(mensagem, categorias, formas, categoria, forma)
 
+    # A IA fechou os dois campos que faltavam: registra DIRETO, sem pedir
+    # confirmação (revisão de 24/07/2026 — pedido de fluidez do Lucas).
+    #
+    # A 1ª versão disto pedia "confirma? sim/não" aqui. Errado pelo critério
+    # de REVERSIBILIDADE: gasto é a ação mais trivial de desfazer do bot
+    # inteiro (*excluir ultimo* / *editar ultimo 45,90*), e o valor — a
+    # única parte que dói errar — já veio de regex determinístico, não da
+    # IA; ela só classificou categoria/forma. Cobrar uma ida-e-volta extra
+    # no caminho MAIS comum do app pra proteger contra algo trivialmente
+    # desfazível é justamente o atrito que o pedido de fluidez ataca.
+    #
+    # Confirmação continua obrigatória onde desfazer é caro ou impossível:
+    # comando em linguagem natural (_propor_confirmacao_comando — mexe em
+    # grupo/membros/formas) e gasto deduzido pela IA quando nem o VALOR era
+    # certo (_propor_confirmacao_ia, via _tentar_fallback_ia).
+    #
+    # O que substitui a confirmação: a resposta de sucesso diz que a
+    # classificação foi da IA e como corrigir — visível, sem bloquear.
     if categoria and forma:
-        return _propor_confirmacao_ia(
-            uid,
-            {"valor": valor, "categoria": categoria, "forma": forma, "descricao": mensagem},
-            parcelas=parcelas,
+        if parcelas:
+            return _registrar_parcelado_e_confirmar(
+                uid, forma, categoria, valor, parcelas, mensagem, deduzido_por_ia=True
+            )
+        return _registrar_e_confirmar(
+            uid, forma, categoria, valor, mensagem, deduzido_por_ia=True
         )
 
     etapa_inicial = "aguardando_categoria" if not categoria else "aguardando_pagamento"
@@ -530,10 +546,18 @@ def _tentar_fallback_ia(uid: int, mensagem: str) -> str:
     if intencao == "comando":
         return _propor_confirmacao_comando(uid, resultado)
 
+    # Último recurso. Mostra exemplos CONCRETOS em vez de só nomear os
+    # comandos (24/07/2026): quem cai aqui já demonstrou que não sabe a
+    # sintaxe esperada — repetir "use *saldo*, *resumo*" não ensina o
+    # formato de um gasto, que é o que a pessoa provavelmente queria.
     return (
-        "🤔 Não entendi. Digite um valor (ex: *50* ou *50,90*) "
-        "para registrar um gasto.\n"
-        "Ou use: *saldo*, *resumo*, *gastos*, *ajuda*."
+        "🤔 Não entendi essa.\n\n"
+        "💸 *Pra registrar um gasto:*\n"
+        "_50 mercado cartão_\n"
+        "_gastei 120,90 no restaurante no pix_\n\n"
+        "📊 *Pra consultar:* *saldo* · *resumo* · *gastos*\n"
+        "ℹ️ *ajuda* — lista tudo que dá pra fazer\n\n"
+        "_Ou me pergunte direto, tipo: \"como adiciono alguém no grupo?\"_"
     )
 
 
@@ -558,7 +582,7 @@ def _propor_confirmacao_ia(uid: int, resultado: dict, parcelas: int | None = Non
     parcelas_txt = f" em {parcelas}x" if parcelas else ""
     return (
         f"🤔 Entendi que pode ser um gasto de {_brl(valor)}{parcelas_txt} — {cat_txt} ({forma_txt}).\n\n"
-        "Confirma? Responda *sim* para registrar ou qualquer outra coisa para cancelar."
+        "Confirma? Responda *sim* ou *não*."
     )
 
 
@@ -581,7 +605,7 @@ def _propor_confirmacao_comando(uid: int, resultado: dict) -> str:
     return (
         f"🤔 Entendi que você quer: *{descricao}*\n\n"
         f"Vou executar: `{comando}`\n\n"
-        "Confirma? Responda *sim* para executar ou qualquer outra coisa para cancelar."
+        "Confirma? Responda *sim* ou *não*."
     )
 
 
@@ -665,6 +689,13 @@ def _processar_confirmacao_exclusao_parcela(uid: int, sessao: dict, mensagem: st
     dados    = get_dados_temp(sessao)
     resposta = mensagem.strip().lower()
 
+    # "não"/"cancela" aqui é intenção clara de desistir da exclusão — antes
+    # caía no retry genérico ("responda esta ou inteira") e a pessoa ficava
+    # presa até o timeout de 5 min sem um jeito óbvio de sair (24/07/2026).
+    if eh_negativo(mensagem):
+        deletar_sessao(uid)
+        return "👍 Ok, nada foi excluído."
+
     if resposta in ("esta", "essa", "só esta", "so esta", "somente esta", "1"):
         deletar_sessao(uid)
         gasto = excluir_gasto_por_id(dados["gasto_id"])
@@ -685,22 +716,37 @@ def _processar_confirmacao_exclusao_parcela(uid: int, sessao: dict, mensagem: st
 
     return (
         "❓ Não entendi.\n"
-        "Responda *esta* (só essa parcela) ou *inteira* (compra toda) —"
-        " ou espere 5 min pra cancelar."
+        "Responda *esta* (só essa parcela), *inteira* (compra toda) "
+        "ou *não* pra cancelar."
     )
 
 
 def _processar_confirmacao_ia(uid: int, sessao: dict, mensagem: str) -> str:
-    """Fase 3.6 (D-fallback): só 'sim/confirmar' insere o gasto sugerido
-    pela IA. Qualquer outra resposta cancela (mesmo padrão de segurança de
-    _processar_confirmacao_exclusao_parcela — mas aqui sem retry: resposta
-    ambígua também cancela, porque o texto original já está perdido depois
-    da 1ª interpretação e pedir de novo só devolveria outra suposição)."""
-    resposta = mensagem.strip().lower()
-    deletar_sessao(uid)
+    """
+    Fase 3.6 (D-fallback): só resposta afirmativa insere o gasto sugerido
+    pela IA.
 
-    if resposta not in ("sim", "s", "confirma", "confirmar"):
+    Revisão de 24/07/2026 (fluidez): três estados em vez de dois. Antes,
+    QUALQUER coisa fora de ("sim","s","confirma","confirmar") cancelava —
+    "ok"/"pode"/"isso"/"👍" (respostas normais de WhatsApp) jogavam o
+    registro fora sem a pessoa entender o motivo, e um cancelamento
+    acidental era indistinguível de um "não" de verdade. Agora resposta
+    ambígua NÃO cancela: mantém a sessão e pergunta de novo (o timeout de
+    5 min de `sessoes` segue sendo a rede de segurança). Ver
+    utils/respostas.py pro porquê de conjunto curado em vez de fuzzy.
+    """
+    if eh_negativo(mensagem):
+        deletar_sessao(uid)
         return "👍 Ok, nada foi registrado."
+
+    if not eh_afirmativo(mensagem):
+        # Sessão preservada de propósito — a pessoa ainda não decidiu.
+        return (
+            "❓ Não entendi se é pra registrar.\n"
+            "Responda *sim* para registrar ou *não* para cancelar."
+        )
+
+    deletar_sessao(uid)
 
     valor     = float(sessao["valor_temp"])
     dados     = get_dados_temp(sessao)
@@ -737,15 +783,22 @@ def _processar_confirmacao_ia(uid: int, sessao: dict, mensagem: str) -> str:
 
 
 def _processar_confirmacao_comando(uid: int, sessao: dict, mensagem: str) -> str:
-    """Mesmo padrão de segurança de `_processar_confirmacao_ia`: só
-    'sim'/'confirma' executa; qualquer outra resposta cancela sem retry (o
-    comando sugerido já foi decidido na 1ª interpretação — pedir de novo só
-    devolveria outra suposição da IA, não uma correção do usuário)."""
-    resposta = mensagem.strip().lower()
-    deletar_sessao(uid)
-
-    if resposta not in ("sim", "s", "confirma", "confirmar"):
+    """Mesmos três estados de `_processar_confirmacao_ia` — e aqui o retry
+    em resposta ambígua importa ainda mais: comando mexe em grupo/membros/
+    formas, então perder a sessão por causa de um "ok" não reconhecido
+    obrigaria a pessoa a reescrever a frase inteira em linguagem natural e
+    torcer pra IA interpretar igual de novo."""
+    if eh_negativo(mensagem):
+        deletar_sessao(uid)
         return "👍 Ok, nada foi executado."
+
+    if not eh_afirmativo(mensagem):
+        return (
+            "❓ Não entendi se é pra executar.\n"
+            "Responda *sim* para executar ou *não* para cancelar."
+        )
+
+    deletar_sessao(uid)
 
     dados   = get_dados_temp(sessao)
     comando = dados.get("comando_sugerido", "")
@@ -765,7 +818,8 @@ def _processar_confirmacao_comando(uid: int, sessao: dict, mensagem: str) -> str
 # ---------------------------------------------------------------------------
 
 def _registrar_e_confirmar(uid: int, forma: dict, categoria: dict,
-                            valor: float, descricao: str) -> str:
+                            valor: float, descricao: str,
+                            deduzido_por_ia: bool = False) -> str:
     usuario  = get_usuario(uid) or {}
     nome     = usuario.get("nome") or usuario.get("telefone", "")
     grupo_id = usuario.get("grupo_id")
@@ -799,12 +853,17 @@ def _registrar_e_confirmar(uid: int, forma: dict, categoria: dict,
     else:
         linhas.append(f"Total: {_brl(gasto_mes)} gastos este mês")
 
+    if deduzido_por_ia:
+        linhas.append("")
+        linhas.append("_🤖 Categoria/forma deduzidas pela IA — se errei, *excluir ultimo*._")
+
     return "\n".join(linhas)
 
 
 def _registrar_parcelado_e_confirmar(uid: int, forma: dict, categoria: dict,
                                       valor_total: float, parcelas: int,
-                                      descricao: str) -> str:
+                                      descricao: str,
+                                      deduzido_por_ia: bool = False) -> str:
     """Fase 3.2 — compra parcelada: cria a compra + N gastos (services/parcelamento.py)
     e confirma mostrando quantas parcelas, valor de cada uma e a competência da 1ª."""
     usuario  = get_usuario(uid) or {}
@@ -823,6 +882,9 @@ def _registrar_parcelado_e_confirmar(uid: int, forma: dict, categoria: dict,
         f"📂 {cat_nome} — 💳 {forma['nome']}",
         f"🗓 1ª parcela em {formatar_competencia(competencia_1a)}",
     ]
+    if deduzido_por_ia:
+        linhas.append("")
+        linhas.append("_🤖 Categoria/forma deduzidas pela IA — se errei, *excluir ultimo*._")
     return "\n".join(linhas)
 
 

@@ -167,6 +167,11 @@ def cmd_gastos(usuario_id: int) -> str:
 def cmd_ajuda() -> str:
     return (
         "🤖 *Finbot — Comandos disponíveis*\n\n"
+        "💬 *Não precisa decorar nada disso:* fale normal que eu entendo.\n"
+        "_\"adiciona a Ana no grupo, número 44912345678\"_\n"
+        "_\"como eu cadastro uma despesa fixa?\"_\n"
+        "Se eu entender uma ação, confirmo com você antes de fazer.\n\n"
+        "─────────────────────────\n"
         "📝 *Registrar gasto (input livre):*\n"
         "_Ex: 50 mercado cartão_\n"
         "_Ex: gastei 120,90 no restaurante no pix_\n"
