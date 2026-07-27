@@ -308,6 +308,59 @@ def sugerir_categoria_forma(texto: str, categorias: list[str], formas: list[str]
 
 
 # ---------------------------------------------------------------------------
+# Correção de um comando pendente (24/07/2026)
+#
+# "falei errado, o nome correto é teste123" não significa nada sozinho — só
+# faz sentido colado no comando que está esperando confirmação. Por isso
+# esta função recebe os DOIS e devolve a versão corrigida, em vez de tentar
+# classificar a frase isolada (que é o que classificar_mensagem faria).
+# ---------------------------------------------------------------------------
+
+def corrigir_comando(comando_pendente: str, mensagem: str) -> dict:
+    """
+    Retorna {'comando_sugerido': str|None, 'descricao_acao': str|None}.
+    comando_sugerido = None quando a mensagem não é uma correção aplicável
+    (quem chama decide o que fazer — ver services/ai_fallback.py).
+    """
+    from comandos import cmd_ajuda
+
+    prompt = (
+        "O usuário do Finbot (bot financeiro em português) pediu uma ação e "
+        "o bot montou o comando abaixo, aguardando confirmação. Em vez de "
+        "confirmar, o usuário mandou uma mensagem CORRIGINDO o pedido.\n\n"
+        f"COMANDO PENDENTE: {comando_pendente}\n"
+        f"MENSAGEM DE CORREÇÃO DO USUÁRIO: {mensagem}\n\n"
+        "REFERÊNCIA DE COMANDOS DO FINBOT (única fonte de verdade sobre a "
+        "sintaxe — nunca invente comando fora dela):\n"
+        f"{cmd_ajuda()}\n\n"
+        "Aplique a correção sobre o comando pendente, preservando tudo que o "
+        "usuário NÃO pediu pra mudar. Responda SOMENTE em JSON:\n"
+        "- comando_sugerido: o comando corrigido, na sintaxe EXATA da "
+        "referência. Se a mensagem não for uma correção aplicável a este "
+        "comando (ex: assunto totalmente diferente), use null.\n"
+        "- descricao_acao: frase curta explicando o que o comando corrigido "
+        "vai fazer, pra mostrar numa nova confirmação.\n\n"
+        "Exemplo: pendente 'forma add teste 2999' + correção 'falei errado, "
+        "o nome correto é teste123' -> comando_sugerido "
+        "'forma add teste123 2999' (o limite 2999 é preservado, só o nome "
+        "muda).\n\n"
+        "Responda apenas o JSON, sem explicações."
+    )
+
+    resp = _client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=300,
+        response_format={"type": "json_object"},
+    )
+    content = resp.choices[0].message.content
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        return {}
+
+
+# ---------------------------------------------------------------------------
 # Whisper — transcrição de áudio
 # ---------------------------------------------------------------------------
 

@@ -428,6 +428,44 @@ def parece_comando_natural(texto: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Correção de algo pendente (24/07/2026)
+#
+# Bug real (print do Lucas): com uma confirmação em aberto ("Vou executar:
+# forma add teste 2999. Confirma?"), ele respondeu "falei errado, o nome
+# correto é teste123" e o bot ficou MUDO — o silêncio que eu tinha acabado
+# de implementar tratou a correção como ruído.
+#
+# Diferença que o silêncio ignorava: "kkkk" não quer nada; "falei errado, o
+# nome é X" quer MUITO, só que a frase sozinha não significa nada — ela é um
+# delta sobre o que está pendente. Este filtro separa os dois casos sem
+# gastar LLM em cada mensagem solta.
+# ---------------------------------------------------------------------------
+
+_MARCADORES_CORRECAO = (
+    "errado", "errei", "me enganei", "enganei", "equivoquei",
+    "na verdade", "na vdd", "quis dizer", "queria dizer", "digo",
+    "correto", "o certo", "certo e", "corrige", "corrigir", "corrija",
+    "desconsidera", "desconsidere", "ignora isso", "esquece isso",
+    "nao e isso", "nao era isso", "foi mal", "perdao", "desculpa",
+    "troca por", "muda para", "muda pra", "seria",
+)
+
+
+def parece_correcao(texto: str) -> bool:
+    """
+    True quando a frase tem cara de "eu errei, o certo é X" — sinal pra
+    reinterpretar o que está pendente EM CONTEXTO, em vez de ignorar.
+
+    Só um palpite barato: quem resolve é a IA, que recebe o pendente + esta
+    frase e devolve a versão corrigida (services/ai_fallback.py).
+    """
+    txt = _sem_acento((texto or "").strip().lower())
+    if not txt:
+        return False
+    return any(m in txt for m in _MARCADORES_CORRECAO)
+
+
+# ---------------------------------------------------------------------------
 # Filtro barato pra mensagens de grupo real do WhatsApp (Fase 7.4)
 # ---------------------------------------------------------------------------
 

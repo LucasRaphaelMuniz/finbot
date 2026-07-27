@@ -49,7 +49,11 @@ from services.entradas import (
     registrar_entrada,
     get_total_entradas_mes,
 )
-from services.ai_fallback import interpretar_mensagem, completar_categoria_forma
+from services.ai_fallback import (
+    interpretar_mensagem,
+    completar_categoria_forma,
+    interpretar_correcao_comando,
+)
 from services.grupos import adicionar_membro as adicionar_membro_com_limite
 from utils.app_error import AppError
 from utils.respostas import eh_afirmativo, eh_negativo
@@ -69,6 +73,7 @@ from parser import (
     extrair_parcelas,
     eh_entrada,
     parece_comando_natural,
+    parece_correcao,
 )
 from comandos import cmd_saldo, cmd_resumo, cmd_limite, cmd_ajuda, cmd_gastos
 
@@ -238,8 +243,17 @@ def _fora_do_esperado(uid: int, mensagem: str) -> str:
     não-vazia. A sessão fica VIVA de propósito: a pessoa ainda pode
     responder certo depois, e o timeout de 5 min encerra sozinho se ela
     tiver desistido.
+
+    Duas exceções ao silêncio, ambas de mensagens que claramente QUEREM
+    alguma coisa (diferente de "kkkk", que não quer nada):
+    - intenção nova (comando conhecido / frase com estrutura de ordem);
+    - correção ("falei errado, foi 60") — aqui a frase costuma carregar o
+      dado novo, então reprocessar resolve. A confirmação de COMANDO trata
+      correção antes de chegar aqui, com a IA vendo o comando pendente
+      junto (lá a frase sozinha não basta: "o nome correto é X" só
+      significa algo colado no `forma add ...` em aberto).
     """
-    if _parece_nova_intencao(mensagem):
+    if _parece_nova_intencao(mensagem) or parece_correcao(mensagem):
         deletar_sessao(uid)
         resultado = _despachar_comando(uid, mensagem)
         if resultado is not None:
@@ -886,6 +900,16 @@ def _processar_confirmacao_comando(uid: int, sessao: dict, mensagem: str) -> str
         return "👍 Ok, nada foi executado."
 
     if not eh_afirmativo(mensagem):
+        # Correção do comando pendente antes de cair no silêncio
+        # (24/07/2026, print do Lucas: respondeu "falei errado, o nome
+        # correto é teste123" e o bot ficou mudo). A frase sozinha não
+        # significa nada — só colada no comando em aberto —, então vai pra
+        # IA COM esse contexto, não pelo classificador de frase isolada.
+        if parece_correcao(mensagem) and not _parece_nova_intencao(mensagem):
+            pendente = get_dados_temp(sessao).get("comando_sugerido", "")
+            corrigido = interpretar_correcao_comando(pendente, mensagem) if pendente else None
+            if corrigido:
+                return _propor_confirmacao_comando(uid, corrigido)
         return _fora_do_esperado(uid, mensagem)
 
     deletar_sessao(uid)

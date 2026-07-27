@@ -35,7 +35,7 @@ demais até pra tentar regex).
 
 from difflib import SequenceMatcher
 
-from ai import classificar_mensagem, sugerir_categoria_forma
+from ai import classificar_mensagem, corrigir_comando, sugerir_categoria_forma
 from utils.logging_config import obter_logger
 
 logger = obter_logger("finbot.ai_fallback")
@@ -170,6 +170,38 @@ def interpretar_mensagem(texto: str, categorias: list[dict], formas: list[dict])
         }
 
     return {"intencao": "indefinido"}
+
+
+def interpretar_correcao_comando(comando_pendente: str, mensagem: str) -> dict | None:
+    """
+    Aplica uma correção do usuário sobre um comando que está aguardando
+    confirmação (24/07/2026 — print do Lucas: "falei errado, o nome correto
+    é teste123" com `forma add teste 2999` pendente).
+
+    Retorna {'comando_sugerido', 'descricao_acao'} ou None quando não dá pra
+    aplicar (IA não entendeu, falhou, ou devolveu comando fora do
+    vocabulário conhecido). None = quem chama segue o caminho normal de
+    "resposta fora do esperado", nunca executa um palpite.
+
+    Reusa `_comando_valido`: correção passa exatamente pela mesma trava
+    anti-alucinação do comando original — não existe caminho que execute um
+    comando não validado só por ter vindo de uma correção.
+    """
+    try:
+        resultado = corrigir_comando(comando_pendente, mensagem)
+    except Exception as exc:
+        logger.error(f"Falha ao corrigir comando via IA: {exc}")
+        return None
+
+    comando = resultado.get("comando_sugerido")
+    if not _comando_valido(comando):
+        logger.warning(f"Correção devolveu comando inválido, descartada: {comando!r}")
+        return None
+
+    return {
+        "comando_sugerido": comando.strip(),
+        "descricao_acao": (resultado.get("descricao_acao") or comando).strip(),
+    }
 
 
 def completar_categoria_forma(
