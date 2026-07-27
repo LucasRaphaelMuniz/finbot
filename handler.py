@@ -49,7 +49,7 @@ from services.entradas import (
     registrar_entrada,
     get_total_entradas_mes,
 )
-from services.ai_fallback import interpretar_mensagem
+from services.ai_fallback import interpretar_mensagem, completar_categoria_forma
 from services.grupos import adicionar_membro as adicionar_membro_com_limite
 from utils.app_error import AppError
 from utils.telefone import normalizar as _normalizar_telefone
@@ -131,34 +131,9 @@ def processar_mensagem(telefone: str, mensagem: str) -> str:
             )
 
         # ── Comandos normais ────────────────────────────────────────────────
-        if lower == "ajuda":
-            return cmd_ajuda()
-        if lower.startswith("saldo"):
-            return cmd_saldo(uid, lower)
-        if lower == "resumo":
-            return cmd_resumo(uid)
-        if lower.startswith("limite "):
-            return cmd_limite(uid, lower)
-        if lower == "gastos":
-            return cmd_gastos(uid)
-        if lower.startswith("excluir"):
-            return _cmd_excluir(uid, lower)
-        if lower.startswith("editar ultimo"):
-            return _cmd_editar_ultimo(uid, lower)
-        if lower.startswith("forma "):
-            return _cmd_forma(uid, lower)
-        if lower.startswith("categoria "):
-            return _cmd_categoria(uid, lower)
-        if lower.startswith("fixa "):
-            return _cmd_fixa(uid, lower)
-        if lower.startswith("entrada "):
-            return _cmd_entrada(uid, mensagem)
-        if lower.startswith("apelido "):
-            return _cmd_apelido(uid, lower)
-        if lower.startswith("vincular "):
-            return _cmd_vincular(uid, lower)
-        if lower == "grupo" or lower.startswith("grupo "):
-            return _cmd_grupo(uid, mensagem)
+        resultado_comando = _despachar_comando(uid, mensagem)
+        if resultado_comando is not None:
+            return resultado_comando
 
         # ── Input livre ─────────────────────────────────────────────────────
         return _processar_input_livre(uid, mensagem)
@@ -166,6 +141,53 @@ def processar_mensagem(telefone: str, mensagem: str) -> str:
     except Exception as exc:
         logger.exception(f"Erro ao processar mensagem de {telefone}: {exc}")
         return "😕 Ocorreu um erro interno. Tente novamente em instantes."
+
+
+def _despachar_comando(uid: int, mensagem: str) -> str | None:
+    """
+    Roteador de comandos com sintaxe exata (extraído de `processar_mensagem`
+    em 24/07/2026 pra virar reutilizável). Retorna None se `mensagem` não
+    bate em nenhum comando conhecido — quem chama decide o que fazer nesse
+    caso (input livre em `processar_mensagem`, ou "não consegui executar" na
+    confirmação de comando sugerido pela IA em `_processar_confirmacao_comando`).
+
+    Motivo do extract: o fluxo de "IA entende comando em linguagem natural"
+    (services/ai_fallback.py::interpretar_mensagem, intenção 'comando')
+    precisa rodar EXATAMENTE este mesmo roteador depois que o usuário
+    confirma — sem isso, ou duplicava o if/elif inteiro, ou a IA executava
+    a ação direto sem passar pela mesma validação/parsing que um comando
+    digitado manualmente já tem (ex: `_normalizar_telefone`, `_FIXA_ADD_RE`).
+    """
+    lower = mensagem.lower().strip()
+    if lower == "ajuda":
+        return cmd_ajuda()
+    if lower.startswith("saldo"):
+        return cmd_saldo(uid, lower)
+    if lower == "resumo":
+        return cmd_resumo(uid)
+    if lower.startswith("limite "):
+        return cmd_limite(uid, lower)
+    if lower == "gastos":
+        return cmd_gastos(uid)
+    if lower.startswith("excluir"):
+        return _cmd_excluir(uid, lower)
+    if lower.startswith("editar ultimo"):
+        return _cmd_editar_ultimo(uid, lower)
+    if lower.startswith("forma "):
+        return _cmd_forma(uid, lower)
+    if lower.startswith("categoria "):
+        return _cmd_categoria(uid, lower)
+    if lower.startswith("fixa "):
+        return _cmd_fixa(uid, lower)
+    if lower.startswith("entrada "):
+        return _cmd_entrada(uid, mensagem)
+    if lower.startswith("apelido "):
+        return _cmd_apelido(uid, lower)
+    if lower.startswith("vincular "):
+        return _cmd_vincular(uid, lower)
+    if lower == "grupo" or lower.startswith("grupo "):
+        return _cmd_grupo(uid, mensagem)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -427,6 +449,31 @@ def _processar_input_livre(uid: int, mensagem: str) -> str:
             return _registrar_parcelado_e_confirmar(uid, forma, categoria, valor, parcelas, mensagem)
         return _registrar_e_confirmar(uid, forma, categoria, valor, mensagem)
 
+    # Fase 3.6 estendida (24/07/2026, pedido do Lucas: "IA consiga também
+    # alocar gastos pelo entendimento da mensagem") — palavra-chave não
+    # achou categoria e/ou forma (ex: "50 remédio" não bate em nenhum
+    # alias, mas é claramente Farmácia). Só chama IA pro que faltou —
+    # completar_categoria_forma nunca chama se os dois já foram achados
+    # (esse caso já retornou acima).
+    #
+    # Trade-off consciente: se a IA completar OS DOIS agora (o valor já é
+    # certo por regex, só faltava classificar), pede confirmação antes de
+    # gravar — mesmo padrão do fallback completo (_propor_confirmacao_ia),
+    # nunca grava dedução de IA sem o usuário confirmar. Se só sobrar UM
+    # dos dois em aberto mesmo depois da IA tentar, cai no menu guiado como
+    # já acontecia — e o campo que a IA já resolveu entra pré-preenchido
+    # SEM confirmação separada (mesmo nível de confiança que um casamento
+    # por palavra-chave já tinha antes: aparece no "✅ Registrado..." final,
+    # corrigível via *editar ultimo*/*excluir ultimo* se a IA errou).
+    categoria, forma = completar_categoria_forma(mensagem, categorias, formas, categoria, forma)
+
+    if categoria and forma:
+        return _propor_confirmacao_ia(
+            uid,
+            {"valor": valor, "categoria": categoria, "forma": forma, "descricao": mensagem},
+            parcelas=parcelas,
+        )
+
     etapa_inicial = "aguardando_categoria" if not categoria else "aguardando_pagamento"
     criar_sessao(
         uid,
@@ -471,6 +518,18 @@ def _tentar_fallback_ia(uid: int, mensagem: str) -> str:
     if intencao == "gasto":
         return _propor_confirmacao_ia(uid, resultado)
 
+    # 24/07/2026 — pergunta sobre o app ("como registro o pagamento?"): só
+    # leitura, sem sessão nenhuma, a resposta já vem pronta (grounded na
+    # referência de comandos, ver ai.py::_montar_prompt_fallback).
+    if intencao == "pergunta":
+        return f"💬 _Resposta da IA_\n\n{resultado['resposta']}"
+
+    # 24/07/2026 — comando em linguagem natural ("adicione um membro..."):
+    # NUNCA executa direto — pede confirmação, mesmo padrão de segurança do
+    # fallback de gasto (ação pode alterar grupo/membros/formas/etc.).
+    if intencao == "comando":
+        return _propor_confirmacao_comando(uid, resultado)
+
     return (
         "🤔 Não entendi. Digite um valor (ex: *50* ou *50,90*) "
         "para registrar um gasto.\n"
@@ -478,7 +537,7 @@ def _tentar_fallback_ia(uid: int, mensagem: str) -> str:
     )
 
 
-def _propor_confirmacao_ia(uid: int, resultado: dict) -> str:
+def _propor_confirmacao_ia(uid: int, resultado: dict, parcelas: int | None = None) -> str:
     valor     = resultado["valor"]
     categoria = resultado.get("categoria")
     forma     = resultado.get("forma")
@@ -490,15 +549,39 @@ def _propor_confirmacao_ia(uid: int, resultado: dict) -> str:
         valor_temp=valor,
         categoria_temp=categoria["id"] if categoria else None,
         forma_temp=forma["id"] if forma else None,
-        dados_temp={"descricao": descricao},
+        dados_temp={"descricao": descricao, "parcelas": parcelas},
         timeout_minutos=5,
     )
 
-    cat_txt   = categoria["nome"] if categoria else "categoria não identificada"
-    forma_txt = forma["nome"] if forma else "forma de pagamento não identificada"
+    cat_txt      = categoria["nome"] if categoria else "categoria não identificada"
+    forma_txt    = forma["nome"] if forma else "forma de pagamento não identificada"
+    parcelas_txt = f" em {parcelas}x" if parcelas else ""
     return (
-        f"🤔 Entendi que pode ser um gasto de {_brl(valor)} — {cat_txt} ({forma_txt}).\n\n"
+        f"🤔 Entendi que pode ser um gasto de {_brl(valor)}{parcelas_txt} — {cat_txt} ({forma_txt}).\n\n"
         "Confirma? Responda *sim* para registrar ou qualquer outra coisa para cancelar."
+    )
+
+
+def _propor_confirmacao_comando(uid: int, resultado: dict) -> str:
+    """
+    Mesmo padrão de segurança de `_propor_confirmacao_ia`: a IA entendeu um
+    comando em linguagem natural, mas só EXECUTA depois de "sim" — nunca
+    direto (ver `_processar_confirmacao_comando`, que roteia pelo mesmo
+    `_despachar_comando` usado por um comando digitado manualmente).
+    """
+    comando   = resultado["comando_sugerido"]
+    descricao = resultado.get("descricao_acao") or comando
+
+    criar_sessao(
+        uid,
+        etapa="aguardando_confirmacao_comando",
+        dados_temp={"comando_sugerido": comando},
+        timeout_minutos=5,
+    )
+    return (
+        f"🤔 Entendi que você quer: *{descricao}*\n\n"
+        f"Vou executar: `{comando}`\n\n"
+        "Confirma? Responda *sim* para executar ou qualquer outra coisa para cancelar."
     )
 
 
@@ -569,6 +652,9 @@ def _processar_sessao(uid: int, sessao: dict, mensagem: str) -> str:
     if etapa == "aguardando_confirmacao_ia":
         return _processar_confirmacao_ia(uid, sessao, mensagem)
 
+    if etapa == "aguardando_confirmacao_comando":
+        return _processar_confirmacao_comando(uid, sessao, mensagem)
+
     return "❓ Sessão inválida. Envie um novo valor para começar."
 
 
@@ -619,12 +705,16 @@ def _processar_confirmacao_ia(uid: int, sessao: dict, mensagem: str) -> str:
     valor     = float(sessao["valor_temp"])
     dados     = get_dados_temp(sessao)
     descricao = dados.get("descricao", "")
+    parcelas  = dados.get("parcelas")
     cat_id    = sessao.get("categoria_temp")
     forma_id  = sessao.get("forma_temp")
 
     # A IA não conseguiu deduzir categoria e/ou forma com confiança —
     # cai no mesmo fluxo guiado do input livre normal, sem perder o valor
-    # já confirmado pelo usuário.
+    # já confirmado pelo usuário. dados_temp propagado (bug pré-existente:
+    # antes descricao/parcelas se perdiam aqui, virando "" e sem parcelamento
+    # no registro final caso o usuário ainda precisasse escolher categoria
+    # ou forma manualmente depois de confirmar a dedução parcial da IA).
     if not cat_id or not forma_id:
         categorias = get_categorias(uid)
         formas     = get_formas_pagamento(uid)
@@ -632,6 +722,7 @@ def _processar_confirmacao_ia(uid: int, sessao: dict, mensagem: str) -> str:
         criar_sessao(
             uid, etapa=etapa_inicial, valor_temp=valor,
             categoria_temp=cat_id, forma_temp=forma_id,
+            dados_temp={"parcelas": parcelas, "descricao": descricao},
         )
         return _menu_categorias(categorias) if not cat_id else _menu_formas(formas)
 
@@ -640,7 +731,33 @@ def _processar_confirmacao_ia(uid: int, sessao: dict, mensagem: str) -> str:
     categoria  = next((c for c in categorias if c["id"] == cat_id), None)
     forma      = next((f for f in formas if f["id"] == forma_id), None)
 
+    if parcelas:
+        return _registrar_parcelado_e_confirmar(uid, forma, categoria, valor, parcelas, descricao)
     return _registrar_e_confirmar(uid, forma, categoria, valor, descricao)
+
+
+def _processar_confirmacao_comando(uid: int, sessao: dict, mensagem: str) -> str:
+    """Mesmo padrão de segurança de `_processar_confirmacao_ia`: só
+    'sim'/'confirma' executa; qualquer outra resposta cancela sem retry (o
+    comando sugerido já foi decidido na 1ª interpretação — pedir de novo só
+    devolveria outra suposição da IA, não uma correção do usuário)."""
+    resposta = mensagem.strip().lower()
+    deletar_sessao(uid)
+
+    if resposta not in ("sim", "s", "confirma", "confirmar"):
+        return "👍 Ok, nada foi executado."
+
+    dados   = get_dados_temp(sessao)
+    comando = dados.get("comando_sugerido", "")
+    resultado = _despachar_comando(uid, comando)
+    if resultado is None:
+        # Salvaguarda: services/ai_fallback.py já valida que comando_sugerido
+        # começa com um prefixo conhecido antes de chegar aqui, então isso
+        # não deveria acontecer — mas se acontecer (ex: prefixo bateu mas o
+        # resto da sintaxe ficou errado, tipo "fixa add" sem os campos
+        # completos), não pode travar o usuário numa mensagem confusa.
+        return "❌ Não consegui executar esse comando. Tente digitar manualmente."
+    return resultado
 
 
 # ---------------------------------------------------------------------------

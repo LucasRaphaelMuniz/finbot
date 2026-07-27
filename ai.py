@@ -182,26 +182,61 @@ def extrair_lancamentos_fatura(texto_pdf: str, categorias: list[str] | None = No
 
 
 # ---------------------------------------------------------------------------
-# Fallback de IA — classificação de mensagem não reconhecida (Fase 3.6)
+# Fallback de IA — classificação de mensagem não reconhecida (Fase 3.6,
+# estendida em 24/07/2026 com 'pergunta' e 'comando' — pedido do Lucas: "IA
+# precisa entender qual ação tomar" pra comando em linguagem natural, e
+# responder perguntas tipo "como registro o pagamento?")
 # ---------------------------------------------------------------------------
 
-_PROMPT_FALLBACK = (
-    "Você é um classificador de mensagens de um bot financeiro em português.\n"
-    "A mensagem abaixo NÃO tem um valor numérico claro nem bate em nenhum "
-    "comando conhecido do bot. Decida a intenção mais provável e responda "
-    "SOMENTE em JSON.\n\n"
-    "Chaves do JSON:\n"
-    "- intencao: uma de ['gasto', 'ajuda', 'indefinido']\n"
-    "  'gasto' só se você conseguir extrair um valor em reais razoavelmente "
-    "confiável (ex: número por extenso, valor com erro de digitação). "
-    "Caso contrário, use 'indefinido' — não invente valor.\n"
-    "- valor: número decimal (ex: 50.0) se intencao='gasto', senão null\n"
-    "- categoria_sugerida: nome curto da categoria do gasto, ou null\n"
-    "- forma_sugerida: 'Cartão', 'Pix' ou 'Ticket' (ou null)\n"
-    "- descricao: texto curto descrevendo o gasto, ou null\n\n"
-    "Mensagem: {mensagem}\n\n"
-    "Responda apenas o JSON, sem explicações."
-)
+def _montar_prompt_fallback(texto: str) -> str:
+    # Import local (não no topo do módulo) pra evitar ciclo de import:
+    # comandos.py não importa nada deste módulo hoje, mas manter a
+    # dependência só dentro da função que realmente precisa deixa isso
+    # explícito e barato de revisar se um dia comandos.py crescer.
+    from comandos import cmd_ajuda
+
+    referencia = cmd_ajuda()
+    return (
+        "Você é o classificador de intenção do Finbot, um bot financeiro em "
+        "português. A mensagem abaixo do usuário NÃO tem um valor numérico "
+        "claro nem bate na sintaxe EXATA de nenhum comando conhecido. Decida "
+        "a intenção mais provável usando a REFERÊNCIA DE COMANDOS abaixo — "
+        "ela é a ÚNICA fonte de verdade sobre o que o bot sabe fazer; nunca "
+        "invente uma funcionalidade que não está nela.\n\n"
+        "REFERÊNCIA DE COMANDOS DO FINBOT:\n"
+        f"{referencia}\n\n"
+        "Responda SOMENTE em JSON com as chaves:\n"
+        "- intencao: uma de ['gasto', 'ajuda', 'pergunta', 'comando', 'indefinido']\n"
+        "  'gasto' só se você conseguir extrair um valor em reais razoavelmente "
+        "confiável (ex: número por extenso, valor com erro de digitação). "
+        "Caso contrário, use 'indefinido' — não invente valor.\n"
+        "  'pergunta' quando o usuário está perguntando COMO fazer algo no bot "
+        "(ex: 'como registro o pagamento?', 'como eu adiciono uma categoria?').\n"
+        "  'comando' quando o usuário quer EXECUTAR uma ação que existe na "
+        "referência, mas escreveu em linguagem natural em vez da sintaxe exata "
+        "(ex: 'adiciona a Yasmin com o numero 44912345678 no grupo' -> comando "
+        "'grupo add 44912345678').\n"
+        "- valor: número decimal (ex: 50.0) se intencao='gasto', senão null\n"
+        "- categoria_sugerida: nome curto da categoria do gasto, ou null\n"
+        "- forma_sugerida: 'Cartão', 'Pix' ou 'Ticket' (ou null)\n"
+        "- descricao: texto curto descrevendo o gasto, ou null\n"
+        "- resposta: SÓ quando intencao='pergunta' — resposta objetiva em "
+        "português, baseada SOMENTE na referência acima. Se a referência não "
+        "cobrir a dúvida, diga honestamente que essa funcionalidade ainda não "
+        "existe no bot, em vez de inventar um jeito de fazer.\n"
+        "- comando_sugerido: SÓ quando intencao='comando' — o comando na "
+        "sintaxe EXATA da referência, já preenchido com os dados extraídos da "
+        "mensagem (ex: 'grupo add 44912345678'). Se faltar um dado "
+        "obrigatório que a mensagem não informou (ex: pediu pra adicionar "
+        "alguém mas só deu o nome, sem telefone), use intencao='pergunta' e "
+        "explique em 'resposta' o que falta informar — NUNCA invente um dado "
+        "que não está na mensagem.\n"
+        "- descricao_acao: SÓ quando intencao='comando' — frase curta "
+        "explicando o que o comando vai fazer, pra mostrar numa confirmação "
+        "antes de executar (ex: 'Adicionar +55 44 91234-5678 ao seu grupo').\n\n"
+        f"Mensagem do usuário: {texto}\n\n"
+        "Responda apenas o JSON, sem explicações."
+    )
 
 
 def classificar_mensagem(texto: str) -> dict:
@@ -210,12 +245,17 @@ def classificar_mensagem(texto: str) -> dict:
     nem têm valor extraído pelo parser regex. `services/ai_fallback.py` já
     filtra os casos baratos ("ajuda"/"cancelar") antes de chegar aqui, então
     esta função só é chamada quando vale a pena gastar 1 requisição de LLM.
+
+    A EXECUÇÃO de 'comando' e a validação de que 'comando_sugerido' é mesmo
+    um comando real do bot (não uma alucinação da IA) acontecem em
+    services/ai_fallback.py + handler.py, não aqui — esta função só
+    classifica e devolve o JSON cru.
     """
-    prompt = _PROMPT_FALLBACK.replace("{mensagem}", texto)
+    prompt = _montar_prompt_fallback(texto)
     resp = _client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
-        max_tokens=200,
+        max_tokens=400,
         response_format={"type": "json_object"},
     )
     content = resp.choices[0].message.content
@@ -223,6 +263,48 @@ def classificar_mensagem(texto: str) -> dict:
         return json.loads(content)
     except json.JSONDecodeError:
         return {"intencao": "indefinido"}
+
+
+# ---------------------------------------------------------------------------
+# Alocação de gasto por entendimento da mensagem (24/07/2026) — completa
+# categoria/forma quando o casamento por palavra-chave (parser.py) não achou
+# nada, mas o VALOR já foi extraído com certeza (ex: "50 remédio" -> valor
+# certo, mas "remédio" não está em nenhum alias de categoria). Só chamada
+# nesse caso pontual (ver services/ai_fallback.py::completar_categoria_forma)
+# — não em toda mensagem de gasto, pra não custar 1 chamada de LLM em 100%
+# dos registros.
+# ---------------------------------------------------------------------------
+
+def _montar_prompt_categoria_forma(texto: str, categorias: list[str], formas: list[str]) -> str:
+    return (
+        "Classifique o gasto abaixo (mensagem em português, moeda brasileira) "
+        "usando APENAS as listas fornecidas — não sugira nada fora delas.\n\n"
+        f"Categorias disponíveis: [{', '.join(categorias)}]\n"
+        f"Formas de pagamento disponíveis: [{', '.join(formas)}]\n\n"
+        "Responda SOMENTE em JSON com as chaves:\n"
+        "- categoria_sugerida: uma categoria da lista acima, ou null se não "
+        "tiver certeza razoável\n"
+        "- forma_sugerida: uma forma da lista acima, ou null se a mensagem não "
+        "der nenhuma pista de como foi pago\n\n"
+        f"Mensagem: {texto}\n\n"
+        "Responda apenas o JSON, sem explicações."
+    )
+
+
+def sugerir_categoria_forma(texto: str, categorias: list[str], formas: list[str]) -> dict:
+    """Retorna {'categoria_sugerida': str|None, 'forma_sugerida': str|None}."""
+    prompt = _montar_prompt_categoria_forma(texto, categorias, formas)
+    resp = _client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=150,
+        response_format={"type": "json_object"},
+    )
+    content = resp.choices[0].message.content
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        return {}
 
 
 # ---------------------------------------------------------------------------
