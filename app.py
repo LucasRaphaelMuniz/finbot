@@ -317,12 +317,20 @@ def webhook(event_path=None):
         caption  = msg["imageMessage"].get("caption", "")
         mimetype = msg["imageMessage"].get("mimetype", "image/jpeg")
 
-        # Fase 7.4 — em grupo, só vale a pena chamar a Vision (custo de IA)
-        # se a foto vier com legenda: uma imagem solta num grupo é, na
-        # imensa maioria das vezes, papo/meme entre os membros, não um
-        # comprovante endereçado ao bot.
-        if eh_grupo_whatsapp and not caption.strip():
-            return "", 200
+        # Fase 7.4 original: em grupo, só chamava a Vision se a foto viesse
+        # com legenda — economiza IA quando a imagem solta é papo/meme.
+        # Revisado (24/07/2026, pedido do Lucas: mandou foto de nota fiscal
+        # sem legenda no grupo "Despesas Casa" e o bot ficou mudo — o filtro
+        # engolia a imagem ANTES de sequer chamar a Vision). Premissa
+        # original não vale pra um grupo dedicado a despesas — a foto solta
+        # aqui é o caso comum, não a exceção. Troca: sempre chama a Vision;
+        # o que muda é só quando FICAR CALADO se não achar valor (provável
+        # meme/papo) em vez de responder "não consegui ler" pro grupo
+        # inteiro toda vez que alguém manda uma foto qualquer sem intenção
+        # de registrar gasto. Com legenda, sempre responde — legenda é
+        # sinal explícito de intenção. Trade-off consciente: mais chamadas
+        # de Vision (custo) em troca de não perder comprovante nenhum.
+        sem_legenda_em_grupo = eh_grupo_whatsapp and not caption.strip()
 
         try:
             imagem_bytes = baixar_midia(data)
@@ -337,10 +345,14 @@ def webhook(event_path=None):
             numero_cupom = dados.get("numero_cupom")
 
             if not valor:
-                resposta = (
-                    "🔍 Não consegui identificar o valor total no comprovante.\n"
-                    "Digite o valor manualmente (ex: *50 mercado cartão*)."
-                )
+                # Foto solta sem legenda que a Vision não reconheceu como
+                # comprovante: fica calado (provável meme/papo do grupo).
+                # Com legenda ou em 1:1, a intenção era clara — avisa.
+                if not sem_legenda_em_grupo:
+                    resposta = (
+                        "🔍 Não consegui identificar o valor total no comprovante.\n"
+                        "Digite o valor manualmente (ex: *50 mercado cartão*)."
+                    )
             elif verificar_e_marcar_duplicata(telefone, valor, numero_cupom):
                 resposta = (
                     f"⚠️ Este comprovante de *R$ {str(valor).replace('.', ',')}* "
@@ -361,7 +373,11 @@ def webhook(event_path=None):
 
         except Exception as e:
             logger.error(f"Erro ao processar comprovante (Vision): {e}")
-            resposta = "😕 Erro ao ler o comprovante. Tente digitar o gasto manualmente."
+            # Mesma lógica: erro numa foto solta sem legenda em grupo não
+            # vira alarde pro grupo inteiro — só quando havia sinal de
+            # intenção (legenda ou 1:1).
+            if not sem_legenda_em_grupo:
+                resposta = "😕 Erro ao ler o comprovante. Tente digitar o gasto manualmente."
 
     # ── Áudio PTT (voz) ─────────────────────────────────────────────────────
     elif "audioMessage" in msg:
