@@ -369,7 +369,12 @@ def webhook(event_path=None):
                 ]
                 texto_sintetico = " ".join(p for p in partes if p).strip()
                 resultado = processar_mensagem(telefone, texto_sintetico)
-                resposta  = f"📄 _Comprovante lido pela IA_\n\n{resultado}"
+                # resultado vazio = handler decidiu ficar em silêncio (ex:
+                # havia uma pergunta em aberto e isto não a respondia, ver
+                # handler._fora_do_esperado). Mandar só o cabeçalho
+                # "Comprovante lido pela IA" sem o resultado seria pior que
+                # não mandar nada.
+                resposta = f"📄 _Comprovante lido pela IA_\n\n{resultado}" if resultado else None
 
         except Exception as e:
             logger.error(f"Erro ao processar comprovante (Vision): {e}")
@@ -393,7 +398,9 @@ def webhook(event_path=None):
             audio_bytes  = baixar_midia(data)
             transcricao  = transcrever_audio(audio_bytes, mimetype)
             resultado    = processar_mensagem(telefone, transcricao)
-            resposta     = f"🎤 _Ouvi: \"{transcricao}\"_\n\n{resultado}"
+            # Mesmo motivo do bloco de imagem: sem resultado, não manda só
+            # o "Ouvi: ..." solto.
+            resposta = f"🎤 _Ouvi: \"{transcricao}\"_\n\n{resultado}" if resultado else None
 
         except Exception as e:
             logger.error(f"Erro ao processar áudio (Whisper): {e}")

@@ -73,10 +73,11 @@ def test_comando_negativo_cancela_sem_executar(monkeypatch, sessao_mock):
     assert sessao_mock["deletada"] is True
 
 
-def test_comando_ambiguo_preserva_sessao_e_repergunta(monkeypatch, sessao_mock):
-    """O caso que motivou a mudança: resposta que não é nem sim nem não
-    NÃO pode destruir a sessão — senão a pessoa teria que reescrever a
-    frase inteira em linguagem natural e torcer pra IA interpretar igual."""
+def test_comando_ambiguo_fica_em_silencio_e_preserva_sessao(monkeypatch, sessao_mock):
+    """Pedido do Lucas (24/07/2026): "quando solicitar sim ou não, se a
+    pessoa responder outra coisa, o bot simplesmente ignora". Resposta
+    vazia = app.py não envia nada. Sessão continua VIVA — a pessoa ainda
+    pode responder *sim* depois, e o timeout de 5 min encerra sozinho."""
     executados = []
     monkeypatch.setattr(
         handler, "_despachar_comando",
@@ -87,8 +88,30 @@ def test_comando_ambiguo_preserva_sessao_e_repergunta(monkeypatch, sessao_mock):
     resposta = handler._processar_confirmacao_comando(1, _SESSAO_COMANDO, "e aí, quanto ficou?")
 
     assert executados == []
+    assert resposta == ""              # silêncio
     assert sessao_mock["deletada"] is False  # sessão VIVA
-    assert "sim" in resposta.lower() and "não" in resposta.lower()
+
+
+def test_comando_novo_durante_confirmacao_abandona_e_processa(monkeypatch, sessao_mock):
+    """O buraco de "ignorar sempre" (aconteceu no print do Lucas): mandar
+    um COMANDO NOVO com pergunta em aberto não pode sumir no silêncio —
+    senão a pessoa digita duas vezes sem saber por quê."""
+    despachados = []
+
+    def _fake_despachar(uid, cmd):
+        despachados.append(cmd)
+        # 1ª chamada = o comando pendente (não deve acontecer aqui);
+        # a que interessa é o comando NOVO que a pessoa acabou de mandar.
+        return "📊 saldo aqui"
+
+    monkeypatch.setattr(handler, "_despachar_comando", _fake_despachar)
+    monkeypatch.setattr(handler, "get_dados_temp", lambda s: s["dados_temp"])
+
+    resposta = handler._processar_confirmacao_comando(1, _SESSAO_COMANDO, "saldo")
+
+    assert despachados == ["saldo"]          # o NOVO, não "grupo add ..."
+    assert resposta == "📊 saldo aqui"
+    assert sessao_mock["deletada"] is True   # sessão abandonada
 
 
 @pytest.mark.parametrize("resposta_usuario", ["sim", "ok", "pode", "isso", "blz", "👍", "manda"])
@@ -146,7 +169,7 @@ def test_gasto_negativo_cancela(monkeypatch, sessao_mock):
     assert sessao_mock["deletada"] is True
 
 
-def test_gasto_ambiguo_preserva_sessao(monkeypatch, sessao_mock):
+def test_gasto_ambiguo_fica_em_silencio_e_preserva_sessao(monkeypatch, sessao_mock):
     registrados = []
     monkeypatch.setattr(
         handler, "_registrar_e_confirmar",
@@ -154,11 +177,11 @@ def test_gasto_ambiguo_preserva_sessao(monkeypatch, sessao_mock):
     )
     monkeypatch.setattr(handler, "get_dados_temp", lambda s: s["dados_temp"])
 
-    resposta = handler._processar_confirmacao_ia(1, _SESSAO_GASTO, "hmm deixa eu ver")
+    resposta = handler._processar_confirmacao_ia(1, _SESSAO_GASTO, "kkkk pois é")
 
     assert registrados == []
+    assert resposta == ""
     assert sessao_mock["deletada"] is False
-    assert "sim" in resposta.lower()
 
 
 def test_gasto_afirmativo_registra(monkeypatch, sessao_mock):
@@ -175,4 +198,56 @@ def test_gasto_afirmativo_registra(monkeypatch, sessao_mock):
 
     assert registrados == [(50.0, "Farmácia", "Cartão")]
     assert resposta == "✅ ok"
+    assert sessao_mock["deletada"] is True
+
+
+# ---------------------------------------------------------------------------
+# _parece_nova_intencao — decide entre ficar em silêncio e abandonar a
+# pergunta pendente. Conservador de propósito: na dúvida, silêncio (que
+# preserva a sessão) em vez de descartar um registro em andamento.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("texto", [
+    "saldo", "resumo", "gastos", "ajuda",
+    "saldo cartão", "forma add Nubank 2000", "categoria listar",
+    "fixa listar", "grupo", "grupo add 44912345678", "limite cartão 3000",
+    "excluir ultimo", "editar ultimo 45,90", "apelido Lucas",
+    # linguagem natural (parece_comando_natural)
+    "Adiciona a forma de pgto teste com limite de 2999",
+    "cria uma categoria chamada Pets",
+])
+def test_reconhece_nova_intencao(texto):
+    assert handler._parece_nova_intencao(texto) is True, texto
+
+
+@pytest.mark.parametrize("texto", [
+    "",
+    "   ",
+    "1",            # resposta a menu numerado — NÃO é intenção nova
+    "3",
+    "kkkk",
+    "hmm",
+    "deixa eu ver",
+    "quanto ficou?",
+    "ta",
+    "50",           # número solto dentro de um menu é escolha, não gasto novo
+])
+def test_nao_confunde_ruido_com_nova_intencao(texto):
+    assert handler._parece_nova_intencao(texto) is False, texto
+
+
+def test_fora_do_esperado_ruido_fica_em_silencio_sem_apagar_sessao(monkeypatch, sessao_mock):
+    assert handler._fora_do_esperado(1, "kkkk") == ""
+    assert sessao_mock["deletada"] is False
+
+
+def test_fora_do_esperado_gasto_novo_cai_no_input_livre(monkeypatch, sessao_mock):
+    """Comando natural que não bate em _despachar_comando (devolve None)
+    tem que seguir pro fluxo de gasto, não sumir."""
+    monkeypatch.setattr(handler, "_despachar_comando", lambda uid, m: None)
+    monkeypatch.setattr(handler, "_processar_input_livre", lambda uid, m: "✅ registrado")
+
+    resposta = handler._fora_do_esperado(1, "cria uma categoria chamada Pets")
+
+    assert resposta == "✅ registrado"
     assert sessao_mock["deletada"] is True

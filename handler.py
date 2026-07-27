@@ -126,11 +126,15 @@ def processar_mensagem(telefone: str, mensagem: str) -> str:
             )
 
         # ── Sessão expirada ─────────────────────────────────────────────────
-        if verificar_sessao_expirada(uid):
-            return (
-                "⏱ _Registro cancelado por inatividade._\n"
-                "Sua próxima mensagem será tratada como novo gasto."
-            )
+        # Só limpa e SEGUE processando esta mensagem (24/07/2026). Antes,
+        # consumia a mensagem inteira só pra avisar "cancelado por
+        # inatividade — sua próxima mensagem será tratada como novo gasto",
+        # obrigando a pessoa a reenviar. Aconteceu no print do Lucas: mandou
+        # o mesmo comando 2h depois e ele foi engolido por esse aviso em vez
+        # de executar. O aviso descrevia um comportamento pior do que
+        # simplesmente fazer o que a pessoa pediu agora — a sessão pendente
+        # já estava morta de qualquer jeito, não há o que preservar.
+        verificar_sessao_expirada(uid)
 
         # ── Comandos normais ────────────────────────────────────────────────
         resultado_comando = _despachar_comando(uid, mensagem)
@@ -190,6 +194,58 @@ def _despachar_comando(uid: int, mensagem: str) -> str | None:
     if lower == "grupo" or lower.startswith("grupo "):
         return _cmd_grupo(uid, mensagem)
     return None
+
+
+# ---------------------------------------------------------------------------
+# Resposta que não responde a pergunta em aberto (24/07/2026)
+#
+# Pedido do Lucas: "se a próxima mensagem for diferente do solicitado (...)
+# o bot deve apenas ignorar... quando solicitar sim ou não, se a pessoa
+# responder outra coisa, o bot simplesmente ignora".
+#
+# Ignorar direto tem UM buraco, e foi o que apareceu no print dele: se a
+# pessoa manda um COMANDO NOVO com uma sessão aberta, o silêncio a obriga a
+# digitar de novo — sem nenhuma pista de por que a 1ª vez não funcionou.
+# Então o silêncio vale só pra ruído de verdade; mensagem que claramente
+# começa outra coisa abandona a pergunta pendente e é processada.
+#
+# O critério é deliberadamente CONSERVADOR: só prefixo de comando conhecido
+# ou frase com estrutura de ordem (parser.parece_comando_natural). "tem um
+# número" NÃO entra — dentro de um menu numerado ("1. CRÉDITO"), um número
+# solto é resposta ao menu, não gasto novo.
+# ---------------------------------------------------------------------------
+
+_PREFIXOS_NOVA_INTENCAO = (
+    "saldo", "resumo", "gastos", "ajuda", "excluir", "editar ultimo",
+    "forma ", "categoria ", "fixa ", "entrada ", "apelido ",
+    "vincular ", "grupo", "limite ",
+)
+
+
+def _parece_nova_intencao(mensagem: str) -> bool:
+    lower = (mensagem or "").strip().lower()
+    if not lower:
+        return False
+    if any(lower.startswith(p) for p in _PREFIXOS_NOVA_INTENCAO):
+        return True
+    return parece_comando_natural(mensagem)
+
+
+def _fora_do_esperado(uid: int, mensagem: str) -> str:
+    """
+    Chamado quando a resposta não serve pra pergunta em aberto.
+    Devolve "" pra ficar em silêncio — app.py só envia se a resposta for
+    não-vazia. A sessão fica VIVA de propósito: a pessoa ainda pode
+    responder certo depois, e o timeout de 5 min encerra sozinho se ela
+    tiver desistido.
+    """
+    if _parece_nova_intencao(mensagem):
+        deletar_sessao(uid)
+        resultado = _despachar_comando(uid, mensagem)
+        if resultado is not None:
+            return resultado
+        return _processar_input_livre(uid, mensagem)
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -663,7 +719,7 @@ def _processar_sessao(uid: int, sessao: dict, mensagem: str) -> str:
         categorias = get_categorias(uid)
         cat = _selecionar_item(mensagem, categorias)
         if not cat:
-            return f"❌ Categoria inválida.\n{_menu_categorias(categorias)}"
+            return _fora_do_esperado(uid, mensagem)
 
         # Bug real (17/07/2026): "VA atualizacao 264" já tinha a forma
         # detectada pelo parser (forma_temp) no input livre, mas esse passo
@@ -696,7 +752,7 @@ def _processar_sessao(uid: int, sessao: dict, mensagem: str) -> str:
         formas = get_formas_pagamento(uid)
         forma  = _selecionar_item(mensagem, formas)
         if not forma:
-            return f"❌ Forma inválida.\n{_menu_formas(formas)}"
+            return _fora_do_esperado(uid, mensagem)
 
         sessao_atual = get_sessao_ativa(uid)
         dados    = get_dados_temp(sessao_atual or sessao)
@@ -757,11 +813,7 @@ def _processar_confirmacao_exclusao_parcela(uid: int, sessao: dict, mensagem: st
         val = _brl(float(compra["valor_total"]))
         return f"🗑 *Compra parcelada excluída inteira:* {val} — {compra.get('descricao') or '?'}"
 
-    return (
-        "❓ Não entendi.\n"
-        "Responda *esta* (só essa parcela), *inteira* (compra toda) "
-        "ou *não* pra cancelar."
-    )
+    return _fora_do_esperado(uid, mensagem)
 
 
 def _processar_confirmacao_ia(uid: int, sessao: dict, mensagem: str) -> str:
@@ -783,11 +835,9 @@ def _processar_confirmacao_ia(uid: int, sessao: dict, mensagem: str) -> str:
         return "👍 Ok, nada foi registrado."
 
     if not eh_afirmativo(mensagem):
-        # Sessão preservada de propósito — a pessoa ainda não decidiu.
-        return (
-            "❓ Não entendi se é pra registrar.\n"
-            "Responda *sim* para registrar ou *não* para cancelar."
-        )
+        # Silêncio, não "❓ não entendi" (24/07/2026, pedido do Lucas).
+        # Sessão preservada: a pessoa ainda pode responder *sim* depois.
+        return _fora_do_esperado(uid, mensagem)
 
     deletar_sessao(uid)
 
@@ -836,10 +886,7 @@ def _processar_confirmacao_comando(uid: int, sessao: dict, mensagem: str) -> str
         return "👍 Ok, nada foi executado."
 
     if not eh_afirmativo(mensagem):
-        return (
-            "❓ Não entendi se é pra executar.\n"
-            "Responda *sim* para executar ou *não* para cancelar."
-        )
+        return _fora_do_esperado(uid, mensagem)
 
     deletar_sessao(uid)
 
