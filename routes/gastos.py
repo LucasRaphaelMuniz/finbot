@@ -22,6 +22,7 @@ def listar():
         g.usuario_id,
         mes=request.args.get("mes"),
         categoria_id=request.args.get("categoria", type=int),
+        forma_pagamento_id=request.args.get("forma", type=int),
         membro_id=request.args.get("membro", type=int),
         page=request.args.get("page", default=1, type=int),
         per_page=request.args.get("per_page", default=50, type=int),

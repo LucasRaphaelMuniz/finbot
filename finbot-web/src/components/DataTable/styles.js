@@ -22,6 +22,15 @@ export const Th = styled.th`
   color: ${({ theme }) => theme.colors.textMuted};
   border-bottom: 1px solid ${({ theme }) => theme.colors.border};
   font-weight: 500;
+  user-select: none;
+
+  ${({ $ordenavel }) => $ordenavel && `
+    cursor: pointer;
+
+    &:hover {
+      color: inherit;
+    }
+  `}
 `;
 
 export const Td = styled.td`

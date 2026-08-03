@@ -3,6 +3,7 @@ handler.py — lógica principal de processamento de mensagens do Finbot.
 """
 
 import re
+from datetime import date
 from difflib import SequenceMatcher
 
 from utils.logging_config import obter_logger
@@ -74,6 +75,8 @@ from parser import (
     eh_entrada,
     parece_comando_natural,
     parece_correcao,
+    limpar_descricao,
+    extrair_data,
 )
 from comandos import cmd_saldo, cmd_resumo, cmd_limite, cmd_ajuda, cmd_gastos
 
@@ -536,10 +539,25 @@ def _processar_input_livre(uid: int, mensagem: str) -> str:
     forma      = extrair_forma_pagamento(mensagem, formas)
     parcelas   = extrair_parcelas(mensagem)
 
+    # Data explícita no fim da mensagem (03/08/2026, pedido do Lucas: "...
+    # 01-08" registra com data 01/08, não hoje — ver parser.extrair_data).
+    # Tira o token da data ANTES de montar a descrição (limpar_descricao só
+    # sabe tirar valor/categoria/forma, não data) — senão "01-08" sobrava
+    # solto na Descrição. Só compra parcelada fica de fora por enquanto:
+    # cada parcela já calcula sua própria competência mês a mês
+    # (services/parcelamento.py), misturar com uma data manual da 1ª
+    # parcela é conta pra outro dia, não pedida agora.
+    data_gasto = extrair_data(mensagem)
+    mensagem_para_descricao = mensagem
+    if data_gasto and not parcelas:
+        partes = mensagem.rsplit(None, 1)
+        mensagem_para_descricao = partes[0] if len(partes) > 1 else ""
+
     if categoria and forma:
+        descricao = limpar_descricao(mensagem_para_descricao, valor, categoria, forma)
         if parcelas:
-            return _registrar_parcelado_e_confirmar(uid, forma, categoria, valor, parcelas, mensagem)
-        return _registrar_e_confirmar(uid, forma, categoria, valor, mensagem)
+            return _registrar_parcelado_e_confirmar(uid, forma, categoria, valor, parcelas, descricao)
+        return _registrar_e_confirmar(uid, forma, categoria, valor, descricao, data=data_gasto)
 
     # Fase 3.6 estendida (24/07/2026, pedido do Lucas: "IA consiga também
     # alocar gastos pelo entendimento da mensagem") — palavra-chave não
@@ -568,12 +586,13 @@ def _processar_input_livre(uid: int, mensagem: str) -> str:
     # O que substitui a confirmação: a resposta de sucesso diz que a
     # classificação foi da IA e como corrigir — visível, sem bloquear.
     if categoria and forma:
+        descricao = limpar_descricao(mensagem_para_descricao, valor, categoria, forma)
         if parcelas:
             return _registrar_parcelado_e_confirmar(
-                uid, forma, categoria, valor, parcelas, mensagem, deduzido_por_ia=True
+                uid, forma, categoria, valor, parcelas, descricao, deduzido_por_ia=True
             )
         return _registrar_e_confirmar(
-            uid, forma, categoria, valor, mensagem, deduzido_por_ia=True
+            uid, forma, categoria, valor, descricao, deduzido_por_ia=True, data=data_gasto
         )
 
     etapa_inicial = "aguardando_categoria" if not categoria else "aguardando_pagamento"
@@ -933,14 +952,15 @@ def _processar_confirmacao_comando(uid: int, sessao: dict, mensagem: str) -> str
 
 def _registrar_e_confirmar(uid: int, forma: dict, categoria: dict,
                             valor: float, descricao: str,
-                            deduzido_por_ia: bool = False) -> str:
+                            deduzido_por_ia: bool = False,
+                            data: date = None) -> str:
     usuario  = get_usuario(uid) or {}
     nome     = usuario.get("nome") or usuario.get("telefone", "")
     grupo_id = usuario.get("grupo_id")
 
     registrar_gasto(
         uid, forma["id"], categoria["id"], valor, descricao,
-        grupo_id=grupo_id, dia_fechamento=forma.get("dia_fechamento"),
+        grupo_id=grupo_id, dia_fechamento=forma.get("dia_fechamento"), data=data,
     )
     saldo = get_saldo_forma(uid, forma["id"])
 
@@ -954,6 +974,13 @@ def _registrar_e_confirmar(uid: int, forma: dict, categoria: dict,
         f"💰 {_brl(valor)} — {cat_nome}",
         f"💳 {forma_nome}",
     ]
+
+    # Mostra a data só quando NÃO é hoje — visível pra pessoa confirmar que
+    # o "01-08" no fim da mensagem foi entendido certo (transparência, sem
+    # bloquear com confirmação — mesmo raciocínio do aviso "categoria/forma
+    # deduzidas pela IA" logo abaixo).
+    if data and data != date.today():
+        linhas.append(f"🗓 Data: {data.strftime('%d/%m/%Y')}")
 
     if limite:
         sobra = limite - gasto_mes

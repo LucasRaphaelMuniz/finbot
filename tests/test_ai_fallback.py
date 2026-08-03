@@ -61,6 +61,29 @@ def test_cancelar_fuzzy_nao_chama_ia(monkeypatch):
     assert chamou["valor"] is False
 
 
+def test_cancela_com_alvo_especifico_vai_pra_ia(monkeypatch):
+    """Bug real (print do Lucas, 03/08/2026): 'cancela ultimo lançamento'
+    caía no atalho barato de 'cancelar' (por conter a substring 'cancela')
+    e virava no-op silencioso, sem nunca acionar 'excluir ultimo'. Frases
+    com um alvo específico (ultimo, gasto, entrada, lançamento, etc.) têm
+    que passar pela IA, não pelo atalho."""
+    def _fake_classificar(texto):
+        return {
+            "intencao": "comando",
+            "comando_sugerido": "excluir ultimo",
+            "descricao_acao": "Excluir o último gasto registrado",
+        }
+
+    monkeypatch.setattr(ai_fallback, "classificar_mensagem", _fake_classificar)
+
+    resultado = ai_fallback.interpretar_mensagem(
+        "cancela ultimo lançamento", _CATEGORIAS, _FORMAS
+    )
+
+    assert resultado["intencao"] == "comando"
+    assert resultado["comando_sugerido"] == "excluir ultimo"
+
+
 def test_gasto_com_categoria_e_forma_resolvidas(monkeypatch):
     monkeypatch.setattr(
         ai_fallback, "classificar_mensagem",

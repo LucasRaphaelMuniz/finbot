@@ -8,7 +8,7 @@ etc. — este módulo é a camada REST equivalente, sem sessão/vai-e-vem.
 
 from datetime import date
 
-from db import get_conn, _get_grupo_id, registrar_gasto
+from db import get_conn, _get_grupo_id, registrar_gasto, get_formas_pagamento
 from services.categorias import categoria_pertence_ao_usuario
 from services.competencia import calcular_competencia, somar_meses
 from services.despesas_fixas import _dia_efetivo
@@ -17,7 +17,8 @@ from utils.app_error import AppError
 
 
 def listar_gastos(usuario_id: int, mes: str = None, categoria_id: int = None,
-                   membro_id: int = None, page: int = 1, per_page: int = 50) -> dict:
+                   forma_pagamento_id: int = None, membro_id: int = None,
+                   page: int = 1, per_page: int = 50) -> dict:
     """
     mes: "YYYY-MM" — filtra por competência (não por data, mesma decisão da
     Fase 3.2/P2: gasto de cartão perto do fechamento pode "pertencer" ao mês
@@ -44,6 +45,9 @@ def listar_gastos(usuario_id: int, mes: str = None, categoria_id: int = None,
             if categoria_id:
                 condicoes.append("g.categoria_id = %s")
                 params.append(categoria_id)
+            if forma_pagamento_id:
+                condicoes.append("g.forma_pagamento_id = %s")
+                params.append(forma_pagamento_id)
             if membro_id:
                 condicoes.append("g.usuario_id = %s")
                 params.append(membro_id)
@@ -278,7 +282,7 @@ def criar_gasto_parcelado(usuario_id: int, forma: dict, categoria_id: int,
     }
 
 
-_CAMPOS_EDITAVEIS = ("valor", "descricao", "categoria_id", "forma_pagamento_id")
+_CAMPOS_EDITAVEIS = ("valor", "descricao", "categoria_id", "forma_pagamento_id", "data")
 
 
 def atualizar_gasto(usuario_id: int, gasto_id: int, **campos) -> dict | None:
@@ -296,6 +300,38 @@ def atualizar_gasto(usuario_id: int, gasto_id: int, **campos) -> dict | None:
             if campos.get(chave) is not None:
                 sets.append(f"{chave} = %s")
                 params.append(campos[chave])
+
+        # Editar a data (03/08/2026, pedido do Lucas) recalcula a
+        # competência junto — sem isso, corrigir a data de um gasto de
+        # cartão não move a "fatura" a que ele pertence: o filtro de
+        # Lançamentos/Contas é por competência, não por data (ver
+        # listar_gastos), então o lançamento continuaria aparecendo no mês
+        # antigo mesmo com a data nova certa. Usa o dia_fechamento da forma
+        # ATUAL do gasto — a nova, se forma_pagamento_id também veio nesse
+        # mesmo PUT, senão a que já está gravada.
+        if campos.get("data") is not None:
+            forma_id = campos.get("forma_pagamento_id")
+            if forma_id is None:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT forma_pagamento_id FROM gastos WHERE id = %s", (gasto_id,)
+                    )
+                    atual = cur.fetchone()
+                    forma_id = atual["forma_pagamento_id"] if atual else None
+
+            dia_fechamento = None
+            if forma_id:
+                forma = next(
+                    (f for f in get_formas_pagamento(usuario_id) if f["id"] == forma_id), None
+                )
+                dia_fechamento = forma.get("dia_fechamento") if forma else None
+
+            nova_data = campos["data"]
+            if isinstance(nova_data, str):
+                nova_data = date.fromisoformat(nova_data)
+            sets.append("competencia = %s")
+            params.append(calcular_competencia(nova_data, dia_fechamento))
+
         if not sets:
             return None
 

@@ -1,5 +1,6 @@
 import re
 import unicodedata
+from datetime import date
 from difflib import SequenceMatcher
 
 
@@ -170,6 +171,57 @@ def extrair_valor(texto: str) -> float | None:
 
     # 2) Palavras numéricas em português
     return _palavras_para_numero(texto)
+
+
+# ---------------------------------------------------------------------------
+# Data explícita no fim da mensagem (03/08/2026, pedido do Lucas)
+#
+# "restaurante 28,78 credito japones almoço de sexta 01-08" tem que
+# registrar o gasto com data 01/08, não hoje. Aceita dd-mm, dd/mm, dd.mm
+# (ano = corrente) e com ano explícito (dd/mm/aaaa, dd-mm-aa).
+#
+# Só olha o ÚLTIMO token da mensagem, de propósito: o mesmo padrão d/d
+# aparece em descrição de parcela digitada à mão ("Amazon 2/12", como no
+# print do Lucas em Lançamentos) — varrer a frase inteira atrás de
+# qualquer coisa "dd/mm" criaria falso positivo ali. No fim da frase é
+# onde faz sentido uma correção de data ("... foi dia 01-08"); no meio,
+# "2/12" é descrição, não data.
+# ---------------------------------------------------------------------------
+
+_DATA_RE = re.compile(r"^(\d{1,2})[-/.](\d{1,2})(?:[-/.](\d{2,4}))?$")
+
+
+def extrair_data(texto: str, hoje: date | None = None) -> date | None:
+    """
+    Retorna a data explícita no fim da mensagem, ou None (segue com a data
+    default de quem chama — hoje). Rejeita dia/mês fora de faixa (dia>31,
+    mês>12) e combinações que não existem no calendário (31/02).
+    """
+    if not texto:
+        return None
+    tokens = texto.strip().split()
+    if not tokens:
+        return None
+
+    m = _DATA_RE.match(tokens[-1])
+    if not m:
+        return None
+
+    dia, mes, ano_bruto = int(m.group(1)), int(m.group(2)), m.group(3)
+    if not (1 <= dia <= 31 and 1 <= mes <= 12):
+        return None
+
+    if ano_bruto:
+        ano = int(ano_bruto)
+        if ano < 100:
+            ano += 2000
+    else:
+        ano = (hoje or date.today()).year
+
+    try:
+        return date(ano, mes, dia)
+    except ValueError:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +396,86 @@ def extrair_forma_pagamento(texto: str, formas: list):
                 return forma
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# Descrição limpa (03/08/2026, pedido do Lucas)
+#
+# "200 Eloá pix berço portatil" registrava a MENSAGEM INTEIRA como
+# descrição, mesmo já tendo extraído valor=200, categoria=Eloá e
+# forma=Pix/Débito dela mesma — a tabela de Lançamentos mostrava a frase
+# crua na coluna Descrição, duplicando o que as colunas Categoria/Forma/
+# Valor já mostram. O que sobra depois de tirar exatamente o que foi
+# reconhecido ("berço portatil") é a descrição de verdade.
+#
+# Por remoção de TOKEN, não por posição de regex. Duas regras DIFERENTES
+# pra categoria e forma, de propósito:
+#
+# - Forma: remove nome ("CRÉDITO"/"DÉBITO/PIX") E os aliases do grupo dela
+#   ("credito", "visa", "pix", "cartao"...) — vocabulário de forma de
+#   pagamento não colide com descrição de verdade (ninguém escreve "visa"
+#   ou "credito" querendo dizer outra coisa).
+# - Categoria: remove só o NOME ("Restaurante", "Eloá"), NUNCA os aliases
+#   do grupo. Aliases de categoria SÃO palavras comuns de descrição
+#   ("almoço", "cinema", "show", "consulta" — ver _CAT_ALIASES) — foi o que
+#   classificou a categoria, mas continuam informação útil na frase. Bug
+#   pego pelo próprio teste desta função: "restaurante 28,78 credito
+#   japones almoço de sexta" removendo aliases de categoria virava "japones
+#   de sexta" (comeu "almoço"), quando o esperado é manter a frase inteira
+#   menos o que é redundante com as colunas Categoria/Forma/Valor.
+#
+# Se a categoria/forma foi resolvida só por fuzzy (typo do usuário, sem
+# bater nome/alias exato), a palavra digitada pode não ser removida —
+# aceitável: sobrar 1 palavra a mais na descrição é inofensivo (nunca perde
+# informação, só não limpa 100%).
+# ---------------------------------------------------------------------------
+
+def _limpar_token(tok: str) -> str:
+    return _sem_acento(tok.strip(".,!?;:()\"'").lower())
+
+
+def limpar_descricao(texto: str, valor: float | None, categoria: dict | None, forma: dict | None) -> str:
+    """
+    Remove do texto original os tokens já capturados como valor/categoria/
+    forma de pagamento — o que sobra é a descrição. Pode devolver "" quando
+    a mensagem inteira foi consumida pela classificação (ex: "restaurante
+    9,20 pix"): melhor vazio do que repetir categoria/forma/valor na
+    Descrição.
+    """
+    if not texto:
+        return ""
+
+    remover = set()
+
+    if valor is not None:
+        m = _VALOR_RE.search(texto)
+        if m:
+            remover.add(_limpar_token(m.group(1)))
+
+    def _somar_nome(item):
+        if not item:
+            return
+        nome_normalizado = _sem_acento(item["nome"].lower())
+        for palavra in re.split(r"\W+", nome_normalizado):
+            if palavra:
+                remover.add(palavra)
+
+    def _somar_nome_e_aliases(item, grupos_alias):
+        if not item:
+            return
+        _somar_nome(item)
+        nome_normalizado = _sem_acento(item["nome"].lower())
+        for fragmento, aliases in grupos_alias:
+            fragmento_norm = _sem_acento(fragmento.lower())
+            if fragmento_norm in nome_normalizado or nome_normalizado in fragmento_norm:
+                for alias in aliases:
+                    remover.add(_sem_acento(alias.lower()))
+
+    _somar_nome(categoria)
+    _somar_nome_e_aliases(forma, _FORMA_ALIASES)
+
+    sobra = [tok for tok in texto.split() if _limpar_token(tok) not in remover]
+    return " ".join(sobra).strip()
 
 
 # ---------------------------------------------------------------------------

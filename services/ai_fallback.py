@@ -43,6 +43,29 @@ logger = obter_logger("finbot.ai_fallback")
 _AJUDA_KEYWORDS = ["ajuda", "ajudar", "ajude", "help", "comandos", "como funciona"]
 _CANCELAR_KEYWORDS = ["cancelar", "cancela", "esquece", "deixa pra la", "deixa pra lá"]
 
+# "cancela ultimo lançamento" NÃO é o mesmo "cancelar" de abandonar o que
+# está em aberto — é um pedido de ação (desfazer um registro). O atalho
+# barato original casava por substring e tratava os dois casos como um só:
+# "cancela ultimo lançamento" virava no-op silencioso (bug real, print do
+# Lucas em 03/08/2026 — mandou isso esperando que "excluir ultimo" fosse
+# executado, e o bot só respondeu "Ok, nada foi registrado"). Estas palavras
+# sinalizam ALVO específico: quando aparecem junto de "cancela"/"cancelar",
+# a frase deixa de ser candidata ao atalho e cai no fluxo normal (IA via
+# classificar_mensagem, que já conhece "excluir ultimo" pela referência de
+# comandos embutida no prompt) — segue pedindo confirmação antes de excluir,
+# igual a qualquer outro 'comando' sugerido pela IA.
+_CANCELAR_ALVO_ESPECIFICO = (
+    "ultimo", "último", "ultima", "última", "gasto", "entrada", "lancamento",
+    "lançamento", "compra", "fatura", "registro", "parcela",
+)
+
+
+def _cancelar_sem_alvo(texto: str) -> bool:
+    if not _fuzzy_match(texto, _CANCELAR_KEYWORDS):
+        return False
+    txt = texto.strip().lower()
+    return not any(alvo in txt for alvo in _CANCELAR_ALVO_ESPECIFICO)
+
 # Prefixos de comando reais do bot (espelha o roteador em
 # handler.py:_despachar_comando) — usado só pra VALIDAR o `comando_sugerido`
 # que a IA devolve antes de propagar pra confirmação/execução. Se a IA
@@ -123,7 +146,7 @@ def interpretar_mensagem(texto: str, categorias: list[dict], formas: list[dict])
     """
     if _fuzzy_match(texto, _AJUDA_KEYWORDS):
         return {"intencao": "ajuda"}
-    if _fuzzy_match(texto, _CANCELAR_KEYWORDS):
+    if _cancelar_sem_alvo(texto):
         return {"intencao": "cancelar"}
 
     try:

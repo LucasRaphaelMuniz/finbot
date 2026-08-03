@@ -155,7 +155,7 @@ def remover_forma_pagamento(usuario_id: int, nome_forma: str) -> bool:
 
 def registrar_gasto(usuario_id: int, forma_id: int, categoria_id: int,
                     valor: float, descricao: str, grupo_id: int = None,
-                    dia_fechamento: int = None):
+                    dia_fechamento: int = None, data: date = None):
     """
     dia_fechamento: dia de fechamento da forma de pagamento usada (Fase 3.2),
     usado para calcular a competência (mês da fatura) do gasto — ver
@@ -164,17 +164,25 @@ def registrar_gasto(usuario_id: int, forma_id: int, categoria_id: int,
     (dia_vencimento, migração 019) não entra aqui — é assunto do caixa
     (services/resumo.py), não do gasto individual (decisão revista em
     17-18/07/2026, ver nota em services/competencia.py).
+
+    data: data de referência do gasto (03/08/2026, pedido do Lucas — "...
+    01-08" no fim da mensagem registra com data 01/08, não hoje, ver
+    parser.extrair_data). Default hoje. Usada tanto na coluna `data` quanto
+    no cálculo da competência — sem isso, corrigir a data na hora de
+    registrar não moveria a fatura a que o gasto pertence (mesmo raciocínio
+    de services/gastos.py::atualizar_gasto ao editar depois).
     """
-    competencia = calcular_competencia(date.today(), dia_fechamento)
+    data = data or date.today()
+    competencia = calcular_competencia(data, dia_fechamento)
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """INSERT INTO gastos
                        (usuario_id, forma_pagamento_id, categoria_id, valor, descricao,
-                        grupo_id, competencia)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        grupo_id, competencia, data)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                    RETURNING *""",
-                (usuario_id, forma_id, categoria_id, valor, descricao, grupo_id, competencia),
+                (usuario_id, forma_id, categoria_id, valor, descricao, grupo_id, competencia, data),
             )
             conn.commit()
             return dict(cur.fetchone())

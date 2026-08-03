@@ -87,6 +87,7 @@ export default function LancamentosPage() {
     {
       key: "parcela",
       label: "Origem",
+      sortable: false,
       render: (r) =>
         r.projetado ? "fixa (previsto)" :
         r.compra_parcelada_id ? `parcela ${r.parcela_num}/${r.total_parcelas || "?"}` :
@@ -374,6 +375,12 @@ function ModalEditarLancamento({ tipo, item, onFechar, onSalvo, onErro }) {
   const [descricao, setDescricao] = useState(item.descricao || "");
   const [categoriaId, setCategoriaId] = useState(item.categoria_id);
   const [formaId, setFormaId] = useState(item.forma_pagamento_id);
+  // Data editável (03/08/2026, pedido do Lucas) — só gastos: entrada não
+  // expõe isso hoje (services/entradas.py::atualizar_entrada não aceita
+  // `data`, fora de escopo deste pedido). `item.data` vem "YYYY-MM-DD..."
+  // (às vezes com hora) — <input type="date"> só aceita os 10 primeiros
+  // caracteres.
+  const [data, setData] = useState(item.data ? item.data.slice(0, 10) : "");
   // Recorrência (entradas): inicia do estado ATUAL do modelo
   // (recorrente_ativa vem do LEFT JOIN com entradas_fixas — entrada_fixa_id
   // sozinho ficaria marcado pra sempre mesmo depois de desativar).
@@ -405,6 +412,10 @@ function ModalEditarLancamento({ tipo, item, onFechar, onSalvo, onErro }) {
       } else {
         await api.put(`/gastos/${item.id}`, {
           valor, descricao, categoria_id: categoriaId, forma_pagamento_id: formaId,
+          // Muda a competência junto no backend (services/gastos.py::
+          // atualizar_gasto) — sem enviar "data" de propósito quando não
+          // mudou nada, pra não recalcular a competência à toa.
+          ...(data && data !== item.data?.slice(0, 10) ? { data } : {}),
         });
       }
       onSalvo();
@@ -453,6 +464,10 @@ function ModalEditarLancamento({ tipo, item, onFechar, onSalvo, onErro }) {
         )}
         {tipo === "gastos" && (
           <>
+            <Field>
+              <label htmlFor="data-edit">Data</label>
+              <input id="data-edit" type="date" value={data} onChange={(e) => setData(e.target.value)} />
+            </Field>
             <Field>
               <label htmlFor="categoria-edit">Categoria</label>
               <CategoriaSelect id="categoria-edit" value={categoriaId} onChange={setCategoriaId} />
