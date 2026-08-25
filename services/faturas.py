@@ -128,6 +128,17 @@ def status_cartao(usuario_id: int, forma_id: int) -> dict | None:
             ajuste_atual, motivo_atual = _get_ajuste(cur, forma_id, comp_atual)
             ajuste_anterior, motivo_anterior = _get_ajuste(cur, forma_id, comp_anterior)
 
+            # fatura_anterior_paga (25/08/2026, achado via bot: "fatura
+            # anterior a pagar" continuava aparecendo pro Lucas mesmo depois
+            # de ele já ter marcado a fatura como paga no board de /contas —
+            # mesma tabela que o board usa, faturas_pagamentos migração 027).
+            cur.execute(
+                "SELECT 1 FROM faturas_pagamentos "
+                "WHERE forma_pagamento_id = %s AND competencia = %s",
+                (forma_id, comp_anterior),
+            )
+            fatura_anterior_paga = cur.fetchone() is not None
+
         # Fora do `with conn.cursor()` de cima (projetar_despesas_fixas abre
         # cursores próprios), mas ainda dentro da conexão — mesma decisão de
         # services/contas_mes.py::_projecoes (reusar 1 conexão em vez de
@@ -160,6 +171,7 @@ def status_cartao(usuario_id: int, forma_id: int) -> dict | None:
         "limite_disponivel": (limite_mensal - fatura_atual) if limite_mensal is not None else None,
         "fatura_anterior": fatura_anterior,
         "fatura_anterior_bruta": fatura_anterior_bruta,
+        "fatura_anterior_paga": fatura_anterior_paga,
         "ajuste_fatura_anterior": ajuste_anterior,
         "ajuste_motivo_anterior": motivo_anterior,
         "competencia_atual": comp_atual.isoformat(),

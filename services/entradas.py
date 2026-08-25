@@ -13,7 +13,7 @@ grupo, é pessoal.
 from datetime import date as _date
 
 from db import get_conn, _get_grupo_id, _get_dia_corte
-from services.competencia import calcular_competencia
+from services.competencia import calcular_competencia, dia_corte_como_fechamento
 
 
 def registrar_entrada(usuario_id: int, valor: float, descricao: str = "",
@@ -32,14 +32,16 @@ def registrar_entrada(usuario_id: int, valor: float, descricao: str = "",
 
     `competencia` (migração 028): mesma régua de `gastos.competencia`, só
     que entrada não tem cartão — usa sempre o dia_corte do usuário (dia do
-    pagamento/recebimento, pedido do Lucas em 25/08/2026). Salário recebido
-    dia 26 com dia_corte=25 já entra no mês seguinte, igual um gasto entraria.
+    pagamento/recebimento, pedido do Lucas em 25/08/2026), convertido via
+    dia_corte_como_fechamento (regra INVERSA de dia_fechamento — o próprio
+    dia_corte já pertence ao ciclo novo). Salário recebido no dia_corte ou
+    depois já entra no mês seguinte.
     """
     with get_conn() as conn:
         gid = _get_grupo_id(conn, usuario_id)
         dia_corte = _get_dia_corte(conn, usuario_id)
         data_ref = data if data is not None else _date.today()
-        competencia = calcular_competencia(data_ref, dia_corte)
+        competencia = calcular_competencia(data_ref, dia_corte_como_fechamento(dia_corte))
         with conn.cursor() as cur:
             if data is not None:
                 cur.execute(
@@ -73,7 +75,7 @@ def get_entradas_mes(usuario_id: int) -> list[dict]:
     with get_conn() as conn:
         gid = _get_grupo_id(conn, usuario_id)
         dia_corte = _get_dia_corte(conn, usuario_id)
-        competencia_atual = calcular_competencia(_date.today(), dia_corte)
+        competencia_atual = calcular_competencia(_date.today(), dia_corte_como_fechamento(dia_corte))
         with conn.cursor() as cur:
             if gid:
                 cur.execute(

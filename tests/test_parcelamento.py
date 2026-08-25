@@ -16,7 +16,8 @@ from datetime import date
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from parser import extrair_parcelas
-from services.competencia import calcular_competencia, dia_regra, mes_vencimento, somar_meses
+from services.competencia import (calcular_competencia, dia_corte_como_fechamento,
+                                   dia_regra, mes_vencimento, somar_meses)
 from services.parcelamento import dividir_parcelas, formatar_competencia
 
 
@@ -115,12 +116,28 @@ def test_mes_vencimento_vira_o_ano():
 # dia_corte do usuário em vez do mês calendário.
 # ---------------------------------------------------------------------------
 
+def test_dia_corte_como_fechamento_subtrai_um():
+    assert dia_corte_como_fechamento(25) == 24
+
+
+def test_dia_corte_como_fechamento_dia_1_vira_none():
+    # ciclo que já começa no dia 1 é o próprio mês calendário
+    assert dia_corte_como_fechamento(1) is None
+
+
+def test_dia_corte_como_fechamento_none_vira_none():
+    assert dia_corte_como_fechamento(None) is None
+
+
 def test_dia_regra_cartao_manda_sobre_o_corte():
     assert dia_regra(10, 25) == 10
 
 
-def test_dia_regra_sem_cartao_cai_pro_corte():
-    assert dia_regra(None, 25) == 25
+def test_dia_regra_sem_cartao_cai_pro_corte_convertido():
+    # dia_corte=25 vira "fechamento equivalente" 24 (dia_corte_como_fechamento)
+    # pra que o dia 25 em si já empurre pro mês seguinte (bug corrigido em
+    # 25/08/2026 — ver docstring de dia_corte_como_fechamento).
+    assert dia_regra(None, 25) == 24
 
 
 def test_dia_regra_sem_os_dois_e_none():
@@ -132,8 +149,11 @@ def test_competencia_sem_cartao_antes_do_corte_fica_no_mes_atual():
     assert calcular_competencia(date(2026, 8, 20), dia_regra(None, 25)) == date(2026, 8, 1)
 
 
-def test_competencia_sem_cartao_no_dia_exato_do_corte_fica_no_mes_atual():
-    assert calcular_competencia(date(2026, 8, 25), dia_regra(None, 25)) == date(2026, 8, 1)
+def test_competencia_sem_cartao_no_dia_exato_do_corte_ja_vai_pro_mes_seguinte():
+    # Bug corrigido em 25/08/2026: o dia_corte é o dia em que o ciclo NOVO
+    # começa (dia do pagamento/renovação de VA-VR) — dia 25 em si já é
+    # setembro, não fica "pendurado" em agosto até o dia 26.
+    assert calcular_competencia(date(2026, 8, 25), dia_regra(None, 25)) == date(2026, 9, 1)
 
 
 def test_competencia_sem_cartao_depois_do_corte_vai_pro_mes_seguinte():

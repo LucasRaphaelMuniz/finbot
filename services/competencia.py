@@ -63,26 +63,54 @@ def mes_vencimento(competencia: date, dia_fechamento: int | None,
     return somar_meses(competencia, 1)
 
 
+def dia_corte_como_fechamento(dia_corte: int | None) -> int | None:
+    """
+    Converte "dia de corte" (dia_corte, migração 028 — o dia em que o NOVO
+    ciclo já começa, ex.: dia do pagamento) pro formato que
+    calcular_competencia entende (dia_fechamento — o ÚLTIMO dia do ciclo
+    ATUAL, "day > fechamento" empurra pro mês seguinte).
+
+    São regras INVERSAS de propósito: cartão que "fecha dia 25" ainda conta
+    a compra do próprio dia 25 na fatura que está fechando (dia 25 fica no
+    mês atual) — mas dia_corte=25 ("recebo dia 25") já é o PRIMEIRO dia do
+    ciclo novo (dia 25 já vai pro mês seguinte). Bug corrigido em
+    25/08/2026: a 1ª versão desta função tratava os dois igual, e o dia 25
+    (dia do pagamento, quando VA/VR renovam de verdade) continuava mostrando
+    saldo do ciclo antigo até o dia 26.
+
+    Daí o -1: pra calcular_competencia empurrar a partir do próprio
+    dia_corte (day >= dia_corte), o "fechamento equivalente" é o dia
+    anterior (day > dia_corte - 1  ⟺  day >= dia_corte).
+
+    dia_corte=1 vira None (0 é falsy em Python) — coerente: um ciclo que já
+    começa no dia 1 É o mês calendário, não tem o que deslocar.
+    """
+    if not dia_corte:
+        return None
+    return (dia_corte - 1) or None
+
+
 def dia_regra(dia_fechamento: int | None, dia_corte: int | None) -> int | None:
     """
-    Qual "dia de corte" manda na competência de um lançamento: cartão manda
+    Qual "dia" manda na competência de um lançamento: cartão manda
     (dia_fechamento da própria forma) — não muda, decisão do Lucas em
     25/08/2026. Sem cartão (pix/dinheiro/ticket/Custo Fixo, despesa fixa
     fora do cartão, entrada), cai pro dia_corte do usuário (dia em que ele
-    recebe — migração 028): lançamento depois do corte pertence ao mês
-    seguinte, mesma regra de calcular_competencia, só que a data de
-    referência é o pagamento, não o fechamento de fatura.
+    recebe — migração 028), já convertido pra semântica de
+    calcular_competencia via dia_corte_como_fechamento (ver docstring lá —
+    IMPORTANTE: dia_corte não é passado direto, "day > corte" e "day >=
+    corte" são regras diferentes).
 
     Sem os dois (usuário sem dia_corte configurado, hipótese só de dado
     legado/teste — a coluna tem DEFAULT 25), retorna None e
     calcular_competencia cai no comportamento antigo (mês calendário puro).
 
     Função central de propósito: todo lugar que decide "qual dia usar pra
-    calcular_competencia" passa por aqui, em vez de espalhar `dia_fechamento
-    or dia_corte` pelos services — 1 fonte de verdade pra prioridade
+    calcular_competencia" passa por aqui, em vez de espalhar essa lógica
+    pelos services — 1 fonte de verdade pra prioridade
     cartão > corte > mês calendário.
     """
-    return dia_fechamento or dia_corte
+    return dia_fechamento or dia_corte_como_fechamento(dia_corte)
 
 
 def somar_meses(competencia: date, n: int) -> date:

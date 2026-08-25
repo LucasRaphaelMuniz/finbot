@@ -352,17 +352,26 @@ def editar_ultimo_gasto_valor(usuario_id: int, novo_valor: float) -> bool:
 # apareciam antes dessa mudança.
 #
 # "Mês atual" (migração 028, 25/08/2026): NOW() sozinho não basta mais —
-# depois do dia_corte do usuário, "mês atual" já é o mês seguinte pra tudo
+# NO PRÓPRIO dia_corte do usuário, "mês atual" já é o mês seguinte pra tudo
 # que não é cartão (cartão continua pelo dia_fechamento da própria forma,
 # já gravado em g.competencia). O CASE abaixo refaz a mesma conta de
 # calcular_competencia em SQL, forma por forma (COALESCE pega o
 # dia_fechamento quando existe, senão o dia_corte do parâmetro) — não dá
 # pra usar calcular_competencia() aqui porque a query soma várias formas de
 # uma vez, cada uma com seu próprio "dia que manda".
+#
+# NULLIF(%s - 1, 0): dia_corte usa regra INVERSA de dia_fechamento — "fecha
+# dia 25" ainda conta o dia 25 no mês que está fechando, mas dia_corte=25
+# ("recebo dia 25") já é o 1º dia do ciclo NOVO (bug real de 25/08/2026: VA/VR
+# não tinham "renovado" no saldo do bot no próprio dia do pagamento). O -1
+# converte pro formato que o CASE abaixo entende (dia_fechamento — mesma
+# lógica de services/competencia.py::dia_corte_como_fechamento, só que em
+# SQL). NULLIF trata dia_corte=1 como "sem deslocamento" (0 não é um
+# dia_fechamento válido) — ciclo que começa no dia 1 é o mês calendário puro.
 # ---------------------------------------------------------------------------
 
 _SQL_COMPETENCIA_ATUAL = """DATE_TRUNC('month',
-        CASE WHEN EXTRACT(DAY FROM CURRENT_DATE) > COALESCE(fp.dia_fechamento, %s)
+        CASE WHEN EXTRACT(DAY FROM CURRENT_DATE) > COALESCE(fp.dia_fechamento, NULLIF(%s - 1, 0))
              THEN CURRENT_DATE + INTERVAL '1 month'
              ELSE CURRENT_DATE END)"""
 

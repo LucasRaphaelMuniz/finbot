@@ -21,7 +21,7 @@ from datetime import date
 
 import psycopg
 from db import get_conn, _get_grupo_id
-from services.competencia import calcular_competencia, somar_meses
+from services.competencia import calcular_competencia, dia_corte_como_fechamento, somar_meses
 
 
 def _dia_efetivo(dia_lancamento: int, ano: int, mes: int) -> int:
@@ -184,7 +184,7 @@ def _inserir_lancamento(conn, fixa: dict, ano: int, mes: int) -> dict | None:
     respeitar o mesmo mês que um gasto lançado no mesmo dia respeitaria.
     """
     data_devida = date(ano, mes, _dia_efetivo(fixa["dia_lancamento"], ano, mes))
-    competencia = calcular_competencia(data_devida, fixa.get("dia_corte"))
+    competencia = calcular_competencia(data_devida, dia_corte_como_fechamento(fixa.get("dia_corte")))
 
     with conn.cursor() as cur:
         cur.execute(

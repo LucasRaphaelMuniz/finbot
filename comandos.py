@@ -80,11 +80,23 @@ def cmd_saldo(usuario_id: int, mensagem: str) -> str:
         else:
             linhas.append(f"Total: {_brl(gasto)} gastos este mês")
 
-        if status and status["fatura_anterior"] > 0:
-            mes_venc = status["vencimento_fatura_anterior"][:7]
-            linhas.append(
-                f"🧾 Fatura anterior a pagar em {mes_venc}: {_brl(status['fatura_anterior'])}"
-            )
+        if status:
+            # Fatura anterior: só mostra "a pagar" se ainda não foi marcada
+            # como paga no board de /contas (faturas_pagamentos, migração
+            # 027) — corrigido em 25/08/2026: o bot continuava cobrando uma
+            # fatura que o Lucas já tinha pago.
+            if status["fatura_anterior"] > 0 and not status["fatura_anterior_paga"]:
+                mes_venc = status["vencimento_fatura_anterior"][:7]
+                linhas.append(
+                    f"🧾 Fatura anterior a pagar em {mes_venc}: {_brl(status['fatura_anterior'])}"
+                )
+            # Projeção Fatura (25/08/2026, pedido do Lucas): pra onde a
+            # fatura atual deve fechar — real lançado + despesas fixas
+            # daquele cartão ainda não lançadas nessa competência.
+            if status["fixas_previstas_qtd"] > 0:
+                linhas.append(
+                    f"📈 Projeção Fatura: {_brl(status['fatura_atual_estimada'])}"
+                )
 
     return "\n".join(linhas)
 
