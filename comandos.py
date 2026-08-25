@@ -1,6 +1,8 @@
 import re
-from datetime import datetime
-from db import get_saldo_todas_formas, get_resumo_mes, atualizar_limite, get_ultimos_gastos, get_formas_pagamento
+from datetime import date as _date, datetime
+from db import (get_saldo_todas_formas, get_resumo_mes, atualizar_limite,
+                 get_ultimos_gastos, get_formas_pagamento, get_conn, _get_dia_corte)
+from services.competencia import calcular_competencia, dia_corte_como_fechamento
 from services.entradas import get_total_entradas_mes
 from services.faturas import status_cartao
 
@@ -11,9 +13,20 @@ _MESES_PT = {
     9: "Setembro",10: "Outubro",  11: "Novembro", 12: "Dezembro",
 }
 
-def _mes_ano() -> str:
-    now = datetime.now()
-    return f"{_MESES_PT[now.month]}/{now.year}"
+def _mes_ano(usuario_id: int) -> str:
+    """
+    Label do cabeçalho ("Saldo — Setembro/2026") — corrigido em 25/08/2026:
+    antes usava datetime.now() puro (mês calendário), então no próprio dia
+    do corte o cabeçalho ainda dizia o mês velho mesmo com os dados de baixo
+    (get_saldo_todas_formas/get_resumo_mes, já corte-aware desde a migração
+    028) mostrando o ciclo novo — o "meu mês virou" que o Lucas reportou.
+    Usa o mesmo dia_corte do usuário, convertido pra dia_corte_como_fechamento
+    (dia_regra sem cartão, já que o cabeçalho é 1 só pra formas mistas).
+    """
+    with get_conn() as conn:
+        dia_corte = _get_dia_corte(conn, usuario_id)
+    competencia = calcular_competencia(_date.today(), dia_corte_como_fechamento(dia_corte))
+    return f"{_MESES_PT[competencia.month]}/{competencia.year}"
 
 def _brl(valor: float) -> str:
     s = f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -50,7 +63,7 @@ def cmd_saldo(usuario_id: int, mensagem: str) -> str:
         f["id"] for f in get_formas_pagamento(usuario_id) if f.get("dia_fechamento")
     }
 
-    linhas = [f"📊 *Saldo — {_mes_ano()}*"]
+    linhas = [f"📊 *Saldo — {_mes_ano(usuario_id)}*"]
     for f in formas:
         emoji = _emoji_forma(f["nome"])
         linhas.append("")
@@ -109,7 +122,7 @@ def cmd_resumo(usuario_id: int) -> str:
         return "📋 Nenhum gasto ou entrada registrado este mês."
 
     total_gastos = sum(float(g["total"]) for g in gastos) if gastos else 0.0
-    linhas = [f"📋 *Resumo — {_mes_ano()}*\n"]
+    linhas = [f"📋 *Resumo — {_mes_ano(usuario_id)}*\n"]
 
     if gastos:
         for g in gastos:
