@@ -33,7 +33,7 @@ from datetime import date
 
 import psycopg
 from db import get_conn, _get_grupo_id
-from services.competencia import calcular_competencia, somar_meses
+from services.competencia import calcular_competencia, dia_regra, somar_meses
 
 
 def get_despesas_fixas(usuario_id: int, apenas_ativas: bool = True) -> list[dict]:
@@ -249,14 +249,17 @@ def lancar_despesas_fixas_do_mes(hoje: date = None) -> list[dict]:
             # pagamento junto (evita 1 SELECT extra por despesa fixa dentro
             # do loop). Despesa fixa sem forma_pagamento_id, ou com forma
             # sem dia_fechamento (pix/débito/Custo Fixo), cai em
-            # dia_fechamento NULL — calcular_competencia trata isso como
-            # "sem cartão", mesma regra de compra avulsa.
+            # dia_fechamento NULL — aí calcular_competencia usa o dia_corte
+            # do DONO da fixa (u.dia_corte, migração 028; JOIN por
+            # usuario_id porque despesa fixa de grupo pode ter sido criada
+            # por qualquer membro, e o corte é individual), via dia_regra().
             cur.execute(
-                """SELECT f.*, fp.dia_fechamento, fp.dia_vencimento,
+                """SELECT f.*, fp.dia_fechamento, fp.dia_vencimento, u.dia_corte,
                           (SELECT COUNT(*) FROM gastos g WHERE g.despesa_fixa_id = f.id)
                               AS lancadas
                    FROM despesas_fixas f
                    LEFT JOIN formas_pagamento fp ON fp.id = f.forma_pagamento_id
+                   LEFT JOIN usuarios u          ON u.id  = f.usuario_id
                    WHERE f.ativa = TRUE"""
             )
             fixas = [dict(r) for r in cur.fetchall()]
@@ -279,7 +282,9 @@ def lancar_despesas_fixas_do_mes(hoje: date = None) -> list[dict]:
             # cartão que fecha dia 10 tem que cair na fatura que fecharia
             # pro dia 5, senão o atraso do processo mudaria a fatura.
             data_devida = date(hoje.year, hoje.month, dia_efetivo)
-            competencia_corrente = calcular_competencia(data_devida, fixa.get("dia_fechamento"))
+            competencia_corrente = calcular_competencia(
+                data_devida, dia_regra(fixa.get("dia_fechamento"), fixa.get("dia_corte"))
+            )
 
             # ---- Passe 1: mês corrente (dia chegou) --------------------
             if hoje.day >= dia_efetivo:
@@ -350,7 +355,9 @@ def lancar_despesas_fixas_do_mes(hoje: date = None) -> list[dict]:
                                  (hoje.year, hoje.month)):
                 dia_c = _dia_efetivo(fixa["dia_lancamento"], ano_c, mes_c)
                 candidata = date(ano_c, mes_c, dia_c)
-                if calcular_competencia(candidata, fixa.get("dia_fechamento")) == prox_competencia:
+                if calcular_competencia(
+                    candidata, dia_regra(fixa.get("dia_fechamento"), fixa.get("dia_corte"))
+                ) == prox_competencia:
                     data_antecipada = candidata
                     break
             if not data_antecipada:

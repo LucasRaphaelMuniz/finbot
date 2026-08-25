@@ -21,6 +21,7 @@ export default function FormasPage() {
   const [toast, setToast] = useState(null);
   const [modalForma, setModalForma] = useState(undefined); // undefined = fechado, null = criar, {} = editar
   const [removendo, setRemovendo] = useState(null);
+  const [faturaDe, setFaturaDe] = useState(null); // forma selecionada pra "Ver fatura", ou null = fechado
 
   function avisar(mensagem, tipo = "sucesso") {
     setToast({ mensagem, tipo });
@@ -57,6 +58,7 @@ export default function FormasPage() {
         vazio={{ titulo: "Nenhuma forma de pagamento cadastrada" }}
         acoes={(f) => (
           <>
+            {f.dia_fechamento && <AcaoBtn onClick={() => setFaturaDe(f)}>Ver fatura</AcaoBtn>}
             <AcaoBtn onClick={() => setModalForma(f)}>Editar</AcaoBtn>
             <AcaoBtn $perigo onClick={() => setRemovendo(f)}>Remover</AcaoBtn>
           </>
@@ -77,6 +79,12 @@ export default function FormasPage() {
         </Modal>
       )}
 
+      {faturaDe && (
+        <Modal aberto titulo={`Fatura — ${faturaDe.nome}`} onFechar={() => setFaturaDe(null)}>
+          <StatusCartao forma={faturaDe} onErro={(msg) => avisar(msg, "erro")} onAjustado={() => avisar("Ajuste salvo.")} />
+        </Modal>
+      )}
+
       <ConfirmDialog
         aberto={!!removendo}
         titulo="Remover forma de pagamento"
@@ -86,6 +94,155 @@ export default function FormasPage() {
       />
 
       <Toast mensagem={toast?.mensagem} tipo={toast?.tipo} />
+    </div>
+  );
+}
+
+function StatusCartao({ forma, onErro, onAjustado }) {
+  // GET /formas/:id/status-cartao (services/faturas.py::status_cartao) —
+  // fatura_atual (real, já lançado + ajuste) e fatura_atual_estimada (real +
+  // despesas fixas desse cartão ainda não lançadas nessa competência).
+  const { dados: status, loading, refetch } = useApi(`/formas/${forma.id}/status-cartao`);
+  const [editandoAjuste, setEditandoAjuste] = useState(false);
+
+  if (loading || !status) return <p style={{ opacity: 0.7 }}>Carregando...</p>;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 320 }}>
+      <LinhaValor label="Fatura atual (real)" valor={status.fatura_atual} />
+      <LinhaValor
+        label="Fatura atual (estimada)"
+        valor={status.fatura_atual_estimada}
+        detalhe={
+          status.fixas_previstas_qtd > 0
+            ? `inclui ${status.fixas_previstas_qtd} despesa(s) fixa(s) ainda não lançada(s) este mês`
+            : "sem despesa fixa pendente este mês — igual à real"
+        }
+      />
+      {status.limite_mensal != null && (
+        <LinhaValor label="Limite mensal" valor={status.limite_mensal} />
+      )}
+      {status.limite_disponivel != null && (
+        <LinhaValor label="Limite disponível" valor={status.limite_disponivel} />
+      )}
+      <LinhaValor
+        label="Fatura anterior (a pagar)"
+        valor={status.fatura_anterior}
+        detalhe={`vence em ${status.vencimento_fatura_anterior || "—"}`}
+      />
+
+      <div style={{ borderTop: "1px solid rgba(128,128,128,0.25)", paddingTop: 12 }}>
+        {editandoAjuste ? (
+          <AjusteFaturaForm
+            forma={forma}
+            competencia={status.competencia_atual}
+            ajusteAtual={status.ajuste_fatura_atual}
+            motivoAtual={status.ajuste_motivo_atual}
+            onSalvo={() => {
+              setEditandoAjuste(false);
+              refetch();
+              onAjustado();
+            }}
+            onErro={onErro}
+            onCancelar={() => setEditandoAjuste(false)}
+          />
+        ) : (
+          <>
+            <p style={{ fontSize: 13, opacity: 0.8 }}>
+              Ajuste manual da fatura atual:{" "}
+              <strong>{brl(status.ajuste_fatura_atual || 0)}</strong>
+              {status.ajuste_motivo_atual ? ` — ${status.ajuste_motivo_atual}` : ""}
+            </p>
+            <small style={{ opacity: 0.7 }}>
+              Some por cima do total calculado — use quando o banco fecha a
+              fatura com juros, IOF ou arredondamento que não vira um gasto
+              lançado.
+            </small>
+            <div style={{ marginTop: 8 }}>
+              <button type="button" onClick={() => setEditandoAjuste(true)}>
+                {status.ajuste_fatura_atual ? "Editar ajuste" : "Adicionar ajuste"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function LinhaValor({ label, valor, detalhe }) {
+  return (
+    <div>
+      <p style={{ opacity: 0.7, fontSize: 13 }}>{label}</p>
+      <p style={{ fontSize: 18 }}>{brl(valor || 0)}</p>
+      {detalhe && <small style={{ opacity: 0.7 }}>{detalhe}</small>}
+    </div>
+  );
+}
+
+function AjusteFaturaForm({ forma, competencia, ajusteAtual, motivoAtual, onSalvo, onErro, onCancelar }) {
+  const [valor, setValor] = useState(Math.abs(ajusteAtual || 0));
+  const [negativo, setNegativo] = useState((ajusteAtual || 0) < 0);
+  const [motivo, setMotivo] = useState(motivoAtual || "");
+  const [enviando, setEnviando] = useState(false);
+
+  async function salvar() {
+    setEnviando(true);
+    try {
+      await api.put(`/formas/${forma.id}/ajuste-fatura`, {
+        competencia,
+        valor_ajuste: negativo ? -Math.abs(valor) : Math.abs(valor),
+        motivo: motivo.trim() || null,
+      });
+      onSalvo();
+    } catch (err) {
+      onErro(err?.response?.data?.mensagem || "Não foi possível salvar o ajuste.");
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  async function remover() {
+    setEnviando(true);
+    try {
+      await api.delete(`/formas/${forma.id}/ajuste-fatura`, { data: { competencia } });
+      onSalvo();
+    } catch (err) {
+      onErro(err?.response?.data?.mensagem || "Não foi possível remover o ajuste.");
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <Field>
+        <label htmlFor="ajuste-valor">Diferença</label>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <select value={negativo ? "-" : "+"} onChange={(e) => setNegativo(e.target.value === "-")} style={{ width: 64 }}>
+            <option value="+">+</option>
+            <option value="-">−</option>
+          </select>
+          <MoneyInput id="ajuste-valor" value={valor} onChange={setValor} />
+        </div>
+        <small style={{ opacity: 0.7 }}>
+          + quando a fatura fechou maior que o calculado (juros/IOF); − quando
+          fechou menor (desconto/estorno).
+        </small>
+      </Field>
+      <Field>
+        <label htmlFor="ajuste-motivo">Motivo (opcional)</label>
+        <input id="ajuste-motivo" value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="ex: IOF de compra internacional" />
+      </Field>
+      <div style={{ display: "flex", gap: 8 }}>
+        <SalvarBtn type="button" disabled={enviando} onClick={salvar}>
+          {enviando ? "Salvando..." : "Salvar ajuste"}
+        </SalvarBtn>
+        {ajusteAtual ? (
+          <AcaoBtn $perigo type="button" disabled={enviando} onClick={remover}>Remover ajuste</AcaoBtn>
+        ) : null}
+        <button type="button" onClick={onCancelar} disabled={enviando}>Cancelar</button>
+      </div>
     </div>
   );
 }

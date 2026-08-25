@@ -188,12 +188,14 @@ def get_meu_status(usuario_id: int) -> dict:
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT tutorial_web_visto_em, tema FROM usuarios WHERE id = %s", (usuario_id,)
+                "SELECT tutorial_web_visto_em, tema, dia_corte FROM usuarios WHERE id = %s",
+                (usuario_id,),
             )
             row = cur.fetchone()
             return {
                 "tutorial_visto": bool(row and row["tutorial_web_visto_em"]),
                 "tema": row["tema"] if row else "dark",
+                "dia_corte": row["dia_corte"] if row else 25,
             }
 
 
@@ -208,6 +210,30 @@ def atualizar_tema(usuario_id: int, tema: str) -> dict:
             cur.execute("UPDATE usuarios SET tema = %s WHERE id = %s", (tema, usuario_id))
             conn.commit()
     return {"tema": tema}
+
+
+def atualizar_dia_corte(usuario_id: int, dia_corte) -> dict:
+    """
+    dia_corte (migração 028) — "dia do pagamento" do usuário: define a
+    partir de que dia do mês um lançamento sem cartão (entrada, despesa
+    fixa fora do cartão, gasto avulso fora do cartão) já pertence ao mês
+    seguinte (pedido do Lucas em 25/08/2026 — "recebo dia 25, não é mês
+    fechado, é 25/08 até 25/09"; cartão continua só pelo dia_fechamento da
+    forma). "Pode ser ajustado conforme o mês" na fala do Lucas virou campo
+    editável (não recorrência por mês) — decisão de escopo, ver Q3 do
+    pedido: configurável, não uma agenda de valores por mês.
+    """
+    try:
+        dia_corte = int(dia_corte)
+    except (TypeError, ValueError):
+        raise AppError("dia_corte precisa ser um número entre 1 e 31.", 400, "dia_corte_invalido")
+    if not 1 <= dia_corte <= 31:
+        raise AppError("dia_corte precisa ser um número entre 1 e 31.", 400, "dia_corte_invalido")
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE usuarios SET dia_corte = %s WHERE id = %s", (dia_corte, usuario_id))
+            conn.commit()
+    return {"dia_corte": dia_corte}
 
 
 def marcar_tutorial_visto(usuario_id: int, visto: bool = True) -> dict:

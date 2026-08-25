@@ -4,8 +4,8 @@ services/parcelamento.py — compras parceladas (Fase 3.2 do PLANO_EXECUCAO.md).
 
 from datetime import date
 
-from db import get_conn, _get_grupo_id
-from services.competencia import calcular_competencia, somar_meses
+from db import get_conn, _get_grupo_id, _get_dia_corte, _SQL_COMPETENCIA_ATUAL
+from services.competencia import calcular_competencia, dia_regra, somar_meses
 
 _MESES_PT = {
     1: "Janeiro", 2: "Fevereiro", 3: "Março",    4: "Abril",
@@ -39,7 +39,9 @@ def criar_compra_parcelada(usuario_id: int, grupo_id, forma: dict, categoria: di
     """
     Cria a compra parcelada + N gastos (1 por parcela), cada um com
     parcela_num e competencia própria calculada a partir do dia_fechamento
-    da forma (Fase 3.2).
+    da forma (Fase 3.2) — sem cartão (crediário, boleto parcelado), cai pro
+    dia_corte do usuário em vez do mês calendário (migração 028, ver
+    services/competencia.py::dia_regra).
 
     Retorna (compra, gastos_criados, valor_parcela_padrao) — valor_parcela_padrao
     é o valor das parcelas 2..N (a 1ª pode ter alguns centavos a mais, ver
@@ -47,11 +49,12 @@ def criar_compra_parcelada(usuario_id: int, grupo_id, forma: dict, categoria: di
     """
     data_compra = date.today()
     dia_fechamento = forma.get("dia_fechamento")
-    competencia_1a = calcular_competencia(data_compra, dia_fechamento)
     valores = dividir_parcelas(valor_total, parcelas)
     categoria_id = categoria["id"] if categoria else None
 
     with get_conn() as conn:
+        dia_corte = _get_dia_corte(conn, usuario_id)
+        competencia_1a = calcular_competencia(data_compra, dia_regra(dia_fechamento, dia_corte))
         with conn.cursor() as cur:
             cur.execute(
                 """INSERT INTO compras_parceladas
@@ -107,21 +110,25 @@ def listar_parcelamentos_em_andamento(usuario_id: int) -> list[dict]:
     """
     with get_conn() as conn:
         gid = _get_grupo_id(conn, usuario_id)
+        dia_corte = _get_dia_corte(conn, usuario_id)
         filtro = "cp.grupo_id = %s" if gid else "cp.usuario_id = %s AND cp.grupo_id IS NULL"
         param = gid if gid else usuario_id
         with conn.cursor() as cur:
+            # "Mês corrente" (migração 028) usa a mesma regra de
+            # db.py::_SQL_COMPETENCIA_ATUAL — parcela de compra sem cartão
+            # também respeita o dia_corte, não só o mês calendário.
             cur.execute(
                 f"""SELECT cp.id, cp.descricao, cp.valor_total, cp.parcelas, cp.data_compra,
                            fp.nome AS forma_nome, u.nome AS membro_nome,
                            COUNT(g.id) AS parcelas_existentes,
                            COUNT(g.id) FILTER (
-                               WHERE DATE_TRUNC('month', g.competencia) >= DATE_TRUNC('month', NOW())
+                               WHERE DATE_TRUNC('month', g.competencia) >= {_SQL_COMPETENCIA_ATUAL}
                            ) AS parcelas_restantes,
                            COALESCE(SUM(g.valor) FILTER (
-                               WHERE DATE_TRUNC('month', g.competencia) >= DATE_TRUNC('month', NOW())
+                               WHERE DATE_TRUNC('month', g.competencia) >= {_SQL_COMPETENCIA_ATUAL}
                            ), 0) AS valor_restante,
                            MIN(g.competencia) FILTER (
-                               WHERE DATE_TRUNC('month', g.competencia) >= DATE_TRUNC('month', NOW())
+                               WHERE DATE_TRUNC('month', g.competencia) >= {_SQL_COMPETENCIA_ATUAL}
                            ) AS proxima_competencia,
                            MAX(g.competencia) AS ultima_competencia
                     FROM compras_parceladas cp
@@ -132,12 +139,12 @@ def listar_parcelamentos_em_andamento(usuario_id: int) -> list[dict]:
                     GROUP BY cp.id, cp.descricao, cp.valor_total, cp.parcelas,
                              cp.data_compra, fp.nome, u.nome
                     HAVING COUNT(g.id) FILTER (
-                        WHERE DATE_TRUNC('month', g.competencia) >= DATE_TRUNC('month', NOW())
+                        WHERE DATE_TRUNC('month', g.competencia) >= {_SQL_COMPETENCIA_ATUAL}
                     ) > 0
                     ORDER BY MIN(g.competencia) FILTER (
-                        WHERE DATE_TRUNC('month', g.competencia) >= DATE_TRUNC('month', NOW())
+                        WHERE DATE_TRUNC('month', g.competencia) >= {_SQL_COMPETENCIA_ATUAL}
                     )""",
-                (param,),
+                (dia_corte, dia_corte, dia_corte, param, dia_corte, dia_corte),
             )
             compras = [dict(r) | {"tipo": "compra"} for r in cur.fetchall()]
 

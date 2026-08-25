@@ -21,7 +21,7 @@ from datetime import date
 
 import psycopg
 from db import get_conn, _get_grupo_id
-from services.competencia import somar_meses
+from services.competencia import calcular_competencia, somar_meses
 
 
 def _dia_efetivo(dia_lancamento: int, ano: int, mes: int) -> int:
@@ -175,26 +175,34 @@ def _inserir_lancamento(conn, fixa: dict, ano: int, mes: int) -> dict | None:
     uq_entrada_fixa_mes, mesma dupla proteção de
     despesas_fixas.py::_inserir_lancamento: checagem prévia +
     try/except UniqueViolation).
+
+    `competencia` (migração 028): calculada a partir do dia_corte do dono da
+    fixa (fixa["dia_corte"], trazido por JOIN em
+    lancar_entradas_fixas_do_mes) — a checagem de duplicidade e o índice
+    uq_entrada_fixa_mes passaram a olhar competência, não `data`, pela mesma
+    razão de despesas_fixas: salário recebido perto do corte tem que
+    respeitar o mesmo mês que um gasto lançado no mesmo dia respeitaria.
     """
     data_devida = date(ano, mes, _dia_efetivo(fixa["dia_lancamento"], ano, mes))
+    competencia = calcular_competencia(data_devida, fixa.get("dia_corte"))
 
     with conn.cursor() as cur:
         cur.execute(
             """SELECT 1 FROM entradas
                WHERE entrada_fixa_id = %s
-                 AND DATE_TRUNC('month', data) = DATE_TRUNC('month', %s::date)""",
-            (fixa["id"], data_devida),
+                 AND DATE_TRUNC('month', competencia) = DATE_TRUNC('month', %s::date)""",
+            (fixa["id"], competencia),
         )
         if cur.fetchone():
             return None
         try:
             cur.execute(
                 """INSERT INTO entradas
-                       (usuario_id, grupo_id, descricao, valor, data, entrada_fixa_id)
-                   VALUES (%s, %s, %s, %s, %s, %s)
+                       (usuario_id, grupo_id, descricao, valor, data, entrada_fixa_id, competencia)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s)
                    RETURNING *""",
                 (fixa["usuario_id"], fixa["grupo_id"], fixa["descricao"],
-                 fixa["valor"], data_devida, fixa["id"]),
+                 fixa["valor"], data_devida, fixa["id"], competencia),
             )
             entrada = dict(cur.fetchone())
             conn.commit()
@@ -234,7 +242,15 @@ def lancar_entradas_fixas_do_mes(hoje: date = None) -> list[dict]:
 
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM entradas_fixas WHERE ativa = TRUE")
+            # JOIN usuarios pra trazer dia_corte (migração 028) — entrada
+            # não tem cartão, então a competência de cada fixa depende só do
+            # corte do dono dela.
+            cur.execute(
+                """SELECT ef.*, u.dia_corte
+                   FROM entradas_fixas ef
+                   LEFT JOIN usuarios u ON u.id = ef.usuario_id
+                   WHERE ef.ativa = TRUE"""
+            )
             fixas = [dict(r) for r in cur.fetchall()]
 
         for fixa in fixas:
@@ -273,7 +289,7 @@ def total_entradas_fixas_previstas(conn, gid: int | None, usuario_id: int,
                      AND NOT EXISTS (
                          SELECT 1 FROM entradas e
                          WHERE e.entrada_fixa_id = ef.id
-                           AND DATE_TRUNC('month', e.data) = DATE_TRUNC('month', %s::date)
+                           AND DATE_TRUNC('month', e.competencia) = DATE_TRUNC('month', %s::date)
                      )""",
                 (gid, competencia_alvo),
             )
@@ -285,7 +301,7 @@ def total_entradas_fixas_previstas(conn, gid: int | None, usuario_id: int,
                      AND NOT EXISTS (
                          SELECT 1 FROM entradas e
                          WHERE e.entrada_fixa_id = ef.id
-                           AND DATE_TRUNC('month', e.data) = DATE_TRUNC('month', %s::date)
+                           AND DATE_TRUNC('month', e.competencia) = DATE_TRUNC('month', %s::date)
                      )""",
                 (usuario_id, competencia_alvo),
             )

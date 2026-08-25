@@ -8,9 +8,9 @@ etc. — este módulo é a camada REST equivalente, sem sessão/vai-e-vem.
 
 from datetime import date
 
-from db import get_conn, _get_grupo_id, registrar_gasto, get_formas_pagamento
+from db import get_conn, _get_grupo_id, _get_dia_corte, registrar_gasto, get_formas_pagamento
 from services.categorias import categoria_pertence_ao_usuario
-from services.competencia import calcular_competencia, somar_meses
+from services.competencia import calcular_competencia, dia_regra, somar_meses
 from services.despesas_fixas import _dia_efetivo
 from services.parcelamento import criar_compra_parcelada
 from utils.app_error import AppError
@@ -145,6 +145,7 @@ def projetar_despesas_fixas(conn, gid: int | None, usuario_id: int, mes: str) ->
             cur.execute(
                 """SELECT df.*, c.nome AS categoria_nome, fp.nome AS forma_nome,
                           fp.dia_fechamento, fp.dia_vencimento, u.nome AS membro_nome,
+                          u.dia_corte,
                           (SELECT COUNT(*) FROM gastos g WHERE g.despesa_fixa_id = df.id)
                               AS lancadas,
                           (SELECT MAX(g.competencia) FROM gastos g WHERE g.despesa_fixa_id = df.id)
@@ -160,6 +161,7 @@ def projetar_despesas_fixas(conn, gid: int | None, usuario_id: int, mes: str) ->
             cur.execute(
                 """SELECT df.*, c.nome AS categoria_nome, fp.nome AS forma_nome,
                           fp.dia_fechamento, fp.dia_vencimento, u.nome AS membro_nome,
+                          u.dia_corte,
                           (SELECT COUNT(*) FROM gastos g WHERE g.despesa_fixa_id = df.id)
                               AS lancadas,
                           (SELECT MAX(g.competencia) FROM gastos g WHERE g.despesa_fixa_id = df.id)
@@ -207,7 +209,9 @@ def projetar_despesas_fixas(conn, gid: int | None, usuario_id: int, mes: str) ->
         for ano_c, mes_c in candidatos:
             dia_c = _dia_efetivo(fixa["dia_lancamento"], ano_c, mes_c)
             candidata = date(ano_c, mes_c, dia_c)
-            if calcular_competencia(candidata, fixa.get("dia_fechamento")) == competencia_alvo:
+            if calcular_competencia(
+                candidata, dia_regra(fixa.get("dia_fechamento"), fixa.get("dia_corte"))
+            ) == competencia_alvo:
                 data_projetada = candidata
                 break
 
@@ -329,8 +333,9 @@ def atualizar_gasto(usuario_id: int, gasto_id: int, **campos) -> dict | None:
             nova_data = campos["data"]
             if isinstance(nova_data, str):
                 nova_data = date.fromisoformat(nova_data)
+            dia_corte = _get_dia_corte(conn, usuario_id)
             sets.append("competencia = %s")
-            params.append(calcular_competencia(nova_data, dia_fechamento))
+            params.append(calcular_competencia(nova_data, dia_regra(dia_fechamento, dia_corte)))
 
         if not sets:
             return None

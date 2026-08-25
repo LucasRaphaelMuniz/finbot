@@ -10,7 +10,10 @@ com grupo, a entrada é compartilhada (soma pra todo mundo do grupo); sem
 grupo, é pessoal.
 """
 
-from db import get_conn, _get_grupo_id
+from datetime import date as _date
+
+from db import get_conn, _get_grupo_id, _get_dia_corte
+from services.competencia import calcular_competencia
 
 
 def registrar_entrada(usuario_id: int, valor: float, descricao: str = "",
@@ -26,24 +29,33 @@ def registrar_entrada(usuario_id: int, valor: float, descricao: str = "",
     agosto em julho). None = comportamento de sempre, usa o DEFAULT NOW()
     da coluna (migração 005) — o bot e o form de Lançamentos não precisam
     mudar nada.
+
+    `competencia` (migração 028): mesma régua de `gastos.competencia`, só
+    que entrada não tem cartão — usa sempre o dia_corte do usuário (dia do
+    pagamento/recebimento, pedido do Lucas em 25/08/2026). Salário recebido
+    dia 26 com dia_corte=25 já entra no mês seguinte, igual um gasto entraria.
     """
     with get_conn() as conn:
         gid = _get_grupo_id(conn, usuario_id)
+        dia_corte = _get_dia_corte(conn, usuario_id)
+        data_ref = data if data is not None else _date.today()
+        competencia = calcular_competencia(data_ref, dia_corte)
         with conn.cursor() as cur:
             if data is not None:
                 cur.execute(
                     """INSERT INTO entradas
-                           (usuario_id, grupo_id, descricao, valor, entrada_fixa_id, data)
-                       VALUES (%s, %s, %s, %s, %s, %s)
+                           (usuario_id, grupo_id, descricao, valor, entrada_fixa_id, data, competencia)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s)
                        RETURNING *""",
-                    (usuario_id, gid, descricao, valor, entrada_fixa_id, data),
+                    (usuario_id, gid, descricao, valor, entrada_fixa_id, data, competencia),
                 )
             else:
                 cur.execute(
-                    """INSERT INTO entradas (usuario_id, grupo_id, descricao, valor, entrada_fixa_id)
-                       VALUES (%s, %s, %s, %s, %s)
+                    """INSERT INTO entradas
+                           (usuario_id, grupo_id, descricao, valor, entrada_fixa_id, competencia)
+                       VALUES (%s, %s, %s, %s, %s, %s)
                        RETURNING *""",
-                    (usuario_id, gid, descricao, valor, entrada_fixa_id),
+                    (usuario_id, gid, descricao, valor, entrada_fixa_id, competencia),
                 )
             conn.commit()
             return dict(cur.fetchone())
@@ -54,8 +66,14 @@ def get_entradas_mes(usuario_id: int) -> list[dict]:
     # editar precisa saber se a recorrência está LIGADA agora, não só se a
     # entrada nasceu de um modelo (entrada_fixa_id fica pra sempre, mesmo
     # depois de desativar; usar só ele deixaria o checkbox marcado errado).
+    #
+    # "Mês atual" (migração 028) é sobre e.competencia (dia_corte), não mais
+    # e.data — mesma mudança de db.py::_SQL_COMPETENCIA_ATUAL, só que aqui
+    # não tem cartão envolvido, então dá pra calcular em Python direto.
     with get_conn() as conn:
         gid = _get_grupo_id(conn, usuario_id)
+        dia_corte = _get_dia_corte(conn, usuario_id)
+        competencia_atual = calcular_competencia(_date.today(), dia_corte)
         with conn.cursor() as cur:
             if gid:
                 cur.execute(
@@ -64,9 +82,9 @@ def get_entradas_mes(usuario_id: int) -> list[dict]:
                        FROM entradas e
                        LEFT JOIN entradas_fixas ef ON ef.id = e.entrada_fixa_id
                        WHERE e.grupo_id = %s
-                         AND DATE_TRUNC('month', e.data) = DATE_TRUNC('month', NOW())
+                         AND DATE_TRUNC('month', e.competencia) = DATE_TRUNC('month', %s::date)
                        ORDER BY e.data DESC""",
-                    (gid,),
+                    (gid, competencia_atual),
                 )
             else:
                 cur.execute(
@@ -75,9 +93,9 @@ def get_entradas_mes(usuario_id: int) -> list[dict]:
                        FROM entradas e
                        LEFT JOIN entradas_fixas ef ON ef.id = e.entrada_fixa_id
                        WHERE e.usuario_id = %s AND e.grupo_id IS NULL
-                         AND DATE_TRUNC('month', e.data) = DATE_TRUNC('month', NOW())
+                         AND DATE_TRUNC('month', e.competencia) = DATE_TRUNC('month', %s::date)
                        ORDER BY e.data DESC""",
-                    (usuario_id,),
+                    (usuario_id, competencia_atual),
                 )
             return [dict(r) for r in cur.fetchall()]
 
@@ -110,7 +128,7 @@ def get_entradas_competencia(usuario_id: int, competencia: str) -> list[dict]:
             if gid:
                 cur.execute(
                     """SELECT * FROM entradas
-                       WHERE grupo_id = %s AND DATE_TRUNC('month', data) = DATE_TRUNC('month', %s::date)
+                       WHERE grupo_id = %s AND DATE_TRUNC('month', competencia) = DATE_TRUNC('month', %s::date)
                        ORDER BY data DESC""",
                     (gid, competencia),
                 )
@@ -118,7 +136,7 @@ def get_entradas_competencia(usuario_id: int, competencia: str) -> list[dict]:
                 cur.execute(
                     """SELECT * FROM entradas
                        WHERE usuario_id = %s AND grupo_id IS NULL
-                         AND DATE_TRUNC('month', data) = DATE_TRUNC('month', %s::date)
+                         AND DATE_TRUNC('month', competencia) = DATE_TRUNC('month', %s::date)
                        ORDER BY data DESC""",
                     (usuario_id, competencia),
                 )
@@ -133,14 +151,14 @@ def get_total_entradas_competencia(usuario_id: int, competencia: str) -> float:
             if gid:
                 cur.execute(
                     """SELECT COALESCE(SUM(valor), 0) AS total FROM entradas
-                       WHERE grupo_id = %s AND DATE_TRUNC('month', data) = DATE_TRUNC('month', %s::date)""",
+                       WHERE grupo_id = %s AND DATE_TRUNC('month', competencia) = DATE_TRUNC('month', %s::date)""",
                     (gid, competencia),
                 )
             else:
                 cur.execute(
                     """SELECT COALESCE(SUM(valor), 0) AS total FROM entradas
                        WHERE usuario_id = %s AND grupo_id IS NULL
-                         AND DATE_TRUNC('month', data) = DATE_TRUNC('month', %s::date)""",
+                         AND DATE_TRUNC('month', competencia) = DATE_TRUNC('month', %s::date)""",
                     (usuario_id, competencia),
                 )
             return float(cur.fetchone()["total"])

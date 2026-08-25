@@ -4,7 +4,7 @@ import psycopg
 from psycopg.rows import dict_row
 from dotenv import load_dotenv
 
-from services.competencia import calcular_competencia
+from services.competencia import calcular_competencia, dia_regra
 
 load_dotenv()
 
@@ -31,6 +31,17 @@ def _get_grupo_id(conn, usuario_id: int):
         cur.execute("SELECT grupo_id FROM usuarios WHERE id = %s", (usuario_id,))
         row = cur.fetchone()
         return row["grupo_id"] if row else None
+
+
+def _get_dia_corte(conn, usuario_id: int) -> int | None:
+    """dia_corte (migração 028) — "dia do pagamento" do usuário, usado como
+    fallback de calcular_competencia pra tudo que não é cartão (ver
+    services/competencia.py::dia_regra). DEFAULT 25 na coluna, então isto só
+    volta None se o usuário não existir."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT dia_corte FROM usuarios WHERE id = %s", (usuario_id,))
+        row = cur.fetchone()
+        return row["dia_corte"] if row else None
 
 
 # ---------------------------------------------------------------------------
@@ -171,11 +182,17 @@ def registrar_gasto(usuario_id: int, forma_id: int, categoria_id: int,
     no cálculo da competência — sem isso, corrigir a data na hora de
     registrar não moveria a fatura a que o gasto pertence (mesmo raciocínio
     de services/gastos.py::atualizar_gasto ao editar depois).
+
+    Sem dia_fechamento (não é cartão), a competência cai pro dia_corte do
+    usuário em vez do mês calendário puro — migração 028, pedido do Lucas em
+    25/08/2026 ("recebo dia 25, não é mês fechado, é 25/08 até 25/09"). Ver
+    services/competencia.py::dia_regra.
     """
     data = data or date.today()
-    competencia = calcular_competencia(data, dia_fechamento)
     with get_conn() as conn:
         with conn.cursor() as cur:
+            dia_corte = _get_dia_corte(conn, usuario_id)
+            competencia = calcular_competencia(data, dia_regra(dia_fechamento, dia_corte))
             cur.execute(
                 """INSERT INTO gastos
                        (usuario_id, forma_pagamento_id, categoria_id, valor, descricao,
@@ -333,23 +350,39 @@ def editar_ultimo_gasto_valor(usuario_id: int, novo_valor: float) -> bool:
 # Histórico existente foi backfillado (migração 003: competencia = mês da
 # própria data), então gastos antigos continuam batendo com o que já
 # apareciam antes dessa mudança.
+#
+# "Mês atual" (migração 028, 25/08/2026): NOW() sozinho não basta mais —
+# depois do dia_corte do usuário, "mês atual" já é o mês seguinte pra tudo
+# que não é cartão (cartão continua pelo dia_fechamento da própria forma,
+# já gravado em g.competencia). O CASE abaixo refaz a mesma conta de
+# calcular_competencia em SQL, forma por forma (COALESCE pega o
+# dia_fechamento quando existe, senão o dia_corte do parâmetro) — não dá
+# pra usar calcular_competencia() aqui porque a query soma várias formas de
+# uma vez, cada uma com seu próprio "dia que manda".
 # ---------------------------------------------------------------------------
+
+_SQL_COMPETENCIA_ATUAL = """DATE_TRUNC('month',
+        CASE WHEN EXTRACT(DAY FROM CURRENT_DATE) > COALESCE(fp.dia_fechamento, %s)
+             THEN CURRENT_DATE + INTERVAL '1 month'
+             ELSE CURRENT_DATE END)"""
+
 
 def get_saldo_forma(usuario_id: int, forma_id: int):
     """Retorna dict com gasto_mes, limite_mensal, nome. Soma todos os gastos da forma."""
     with get_conn() as conn:
+        dia_corte = _get_dia_corte(conn, usuario_id)
         with conn.cursor() as cur:
             cur.execute(
-                """SELECT fp.nome,
+                f"""SELECT fp.nome,
                           fp.limite_mensal,
                           COALESCE(SUM(g.valor), 0) AS gasto_mes
                    FROM formas_pagamento fp
                    LEFT JOIN gastos g
                      ON g.forma_pagamento_id = fp.id
-                    AND DATE_TRUNC('month', g.competencia) = DATE_TRUNC('month', NOW())
+                    AND DATE_TRUNC('month', g.competencia) = {_SQL_COMPETENCIA_ATUAL}
                    WHERE fp.id = %s
                    GROUP BY fp.id, fp.nome, fp.limite_mensal""",
-                (forma_id,),
+                (dia_corte, forma_id),
             )
             row = cur.fetchone()
             return dict(row) if row else None
@@ -358,32 +391,33 @@ def get_saldo_forma(usuario_id: int, forma_id: int):
 def get_saldo_todas_formas(usuario_id: int):
     with get_conn() as conn:
         gid = _get_grupo_id(conn, usuario_id)
+        dia_corte = _get_dia_corte(conn, usuario_id)
         with conn.cursor() as cur:
             if gid:
                 cur.execute(
-                    """SELECT fp.id, fp.nome, fp.limite_mensal,
+                    f"""SELECT fp.id, fp.nome, fp.limite_mensal,
                               COALESCE(SUM(g.valor), 0) AS gasto_mes
                        FROM formas_pagamento fp
                        LEFT JOIN gastos g
                          ON g.forma_pagamento_id = fp.id
-                        AND DATE_TRUNC('month', g.competencia) = DATE_TRUNC('month', NOW())
+                        AND DATE_TRUNC('month', g.competencia) = {_SQL_COMPETENCIA_ATUAL}
                        WHERE fp.grupo_id = %s
                        GROUP BY fp.id, fp.nome, fp.limite_mensal
                        ORDER BY fp.nome""",
-                    (gid,),
+                    (dia_corte, gid),
                 )
             else:
                 cur.execute(
-                    """SELECT fp.id, fp.nome, fp.limite_mensal,
+                    f"""SELECT fp.id, fp.nome, fp.limite_mensal,
                               COALESCE(SUM(g.valor), 0) AS gasto_mes
                        FROM formas_pagamento fp
                        LEFT JOIN gastos g
                          ON g.forma_pagamento_id = fp.id
-                        AND DATE_TRUNC('month', g.competencia) = DATE_TRUNC('month', NOW())
+                        AND DATE_TRUNC('month', g.competencia) = {_SQL_COMPETENCIA_ATUAL}
                        WHERE fp.usuario_id = %s AND fp.grupo_id IS NULL
                        GROUP BY fp.id, fp.nome, fp.limite_mensal
                        ORDER BY fp.nome""",
-                    (usuario_id,),
+                    (dia_corte, usuario_id),
                 )
             return [dict(r) for r in cur.fetchall()]
 
@@ -393,33 +427,36 @@ def get_saldo_todas_formas(usuario_id: int):
 # ---------------------------------------------------------------------------
 
 def get_resumo_mes(usuario_id: int):
+    """"Mês atual" aqui já é sob o dia_corte pra tudo que não é cartão
+    (migração 028) — ver _SQL_COMPETENCIA_ATUAL logo acima."""
     with get_conn() as conn:
         gid = _get_grupo_id(conn, usuario_id)
+        dia_corte = _get_dia_corte(conn, usuario_id)
         with conn.cursor() as cur:
             if gid:
                 cur.execute(
-                    """SELECT c.nome AS categoria, fp.nome AS forma, SUM(g.valor) AS total
+                    f"""SELECT c.nome AS categoria, fp.nome AS forma, SUM(g.valor) AS total
                        FROM gastos g
                        JOIN categorias c        ON c.id  = g.categoria_id
                        JOIN formas_pagamento fp ON fp.id = g.forma_pagamento_id
                        WHERE fp.grupo_id = %s
-                         AND DATE_TRUNC('month', g.competencia) = DATE_TRUNC('month', NOW())
+                         AND DATE_TRUNC('month', g.competencia) = {_SQL_COMPETENCIA_ATUAL}
                        GROUP BY c.nome, fp.nome
                        ORDER BY total DESC""",
-                    (gid,),
+                    (gid, dia_corte),
                 )
             else:
                 cur.execute(
-                    """SELECT c.nome AS categoria, fp.nome AS forma, SUM(g.valor) AS total
+                    f"""SELECT c.nome AS categoria, fp.nome AS forma, SUM(g.valor) AS total
                        FROM gastos g
                        JOIN categorias c        ON c.id  = g.categoria_id
                        JOIN formas_pagamento fp ON fp.id = g.forma_pagamento_id
                        WHERE g.usuario_id = %s
                          AND g.grupo_id IS NULL
-                         AND DATE_TRUNC('month', g.competencia) = DATE_TRUNC('month', NOW())
+                         AND DATE_TRUNC('month', g.competencia) = {_SQL_COMPETENCIA_ATUAL}
                        GROUP BY c.nome, fp.nome
                        ORDER BY total DESC""",
-                    (usuario_id,),
+                    (usuario_id, dia_corte),
                 )
             return [dict(r) for r in cur.fetchall()]
 

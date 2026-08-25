@@ -76,11 +76,13 @@ def resumo_mensal(usuario_id: int, mes: str = None) -> dict:
             gastos_por_mes = {str(r["mes"])[:7]: float(r["total"]) for r in cur.fetchall()}
 
             # Últimos 6 meses — entradas por mês (mesmo raciocínio acima).
+            # Por competência (migração 028, dia_corte), não mais por data —
+            # mesma régua do gráfico de gastos ao lado.
             cur.execute(
-                f"""SELECT DATE_TRUNC('month', e.data) AS mes, SUM(e.valor) AS total
+                f"""SELECT DATE_TRUNC('month', e.competencia) AS mes, SUM(e.valor) AS total
                     FROM entradas e
                     WHERE {filtro_entradas}
-                      AND e.data >= (%s::date - INTERVAL '5 months')
+                      AND e.competencia >= (%s::date - INTERVAL '5 months')
                     GROUP BY mes ORDER BY mes""",
                 (param_gastos, competencia),
             )

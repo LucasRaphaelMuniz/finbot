@@ -63,6 +63,28 @@ def mes_vencimento(competencia: date, dia_fechamento: int | None,
     return somar_meses(competencia, 1)
 
 
+def dia_regra(dia_fechamento: int | None, dia_corte: int | None) -> int | None:
+    """
+    Qual "dia de corte" manda na competência de um lançamento: cartão manda
+    (dia_fechamento da própria forma) — não muda, decisão do Lucas em
+    25/08/2026. Sem cartão (pix/dinheiro/ticket/Custo Fixo, despesa fixa
+    fora do cartão, entrada), cai pro dia_corte do usuário (dia em que ele
+    recebe — migração 028): lançamento depois do corte pertence ao mês
+    seguinte, mesma regra de calcular_competencia, só que a data de
+    referência é o pagamento, não o fechamento de fatura.
+
+    Sem os dois (usuário sem dia_corte configurado, hipótese só de dado
+    legado/teste — a coluna tem DEFAULT 25), retorna None e
+    calcular_competencia cai no comportamento antigo (mês calendário puro).
+
+    Função central de propósito: todo lugar que decide "qual dia usar pra
+    calcular_competencia" passa por aqui, em vez de espalhar `dia_fechamento
+    or dia_corte` pelos services — 1 fonte de verdade pra prioridade
+    cartão > corte > mês calendário.
+    """
+    return dia_fechamento or dia_corte
+
+
 def somar_meses(competencia: date, n: int) -> date:
     """
     Soma n meses a uma competência (primeiro dia do mês). Usada para calcular

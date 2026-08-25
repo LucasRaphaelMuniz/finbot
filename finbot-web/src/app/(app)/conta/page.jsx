@@ -3,7 +3,7 @@
 // app/(app)/conta/page.jsx — Fase 5.6 do PLANO_EXECUCAO.md: nome/apelido,
 // e-mail, troca de senha, sair, exclusão de conta (LGPD, reescrita na
 // Fase 7.5: só o master apaga tudo, com reautenticação por senha).
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { useTema } from "@/components/ThemeRegistry";
@@ -40,6 +40,8 @@ export default function ContaPage() {
 
       <TemaToggle onErro={(m) => avisar(m, "erro")} />
 
+      <DiaCorteForm onSalvo={() => avisar("Dia de corte atualizado.")} onErro={(m) => avisar(m, "erro")} />
+
       <NomeForm onSalvo={() => avisar("Nome atualizado.")} onErro={(m) => avisar(m, "erro")} />
       <SenhaForm onSalvo={() => avisar("Senha alterada.")} onErro={(m) => avisar(m, "erro")} />
 
@@ -74,6 +76,62 @@ export default function ContaPage() {
 
       <Toast mensagem={toast?.mensagem} tipo={toast?.tipo} />
     </div>
+  );
+}
+
+function DiaCorteForm({ onSalvo, onErro }) {
+  // dia_corte (migração 028) — "dia do pagamento": a partir de que dia do
+  // mês um lançamento sem cartão (entrada, despesa fixa fora do cartão,
+  // gasto avulso fora do cartão) já pertence ao mês seguinte. Cartão
+  // continua só pelo "Dia de fechamento" da própria forma (tela Formas de
+  // pagamento) — este campo não mexe nisso.
+  const { dados: status } = useApi("/conta/eu");
+  const [diaCorte, setDiaCorte] = useState("");
+  const [enviando, setEnviando] = useState(false);
+
+  useEffect(() => {
+    if (status?.dia_corte != null) setDiaCorte(String(status.dia_corte));
+  }, [status?.dia_corte]);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    const numero = Number(diaCorte);
+    if (!Number.isInteger(numero) || numero < 1 || numero > 31) {
+      onErro("Dia de corte precisa ser um número entre 1 e 31.");
+      return;
+    }
+    setEnviando(true);
+    try {
+      await api.put("/conta/dia-corte", { dia_corte: numero });
+      onSalvo();
+    } catch (err) {
+      onErro(err?.response?.data?.mensagem || "Não foi possível salvar o dia de corte.");
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <Field>
+        <label htmlFor="dia-corte">Dia de corte do mês (dia do pagamento)</label>
+        <input
+          id="dia-corte" type="number" min={1} max={31}
+          value={diaCorte} onChange={(e) => setDiaCorte(e.target.value)}
+          style={{ maxWidth: 100 }}
+        />
+        <small style={{ opacity: 0.7 }}>
+          Lançamento sem cartão feito DEPOIS desse dia já conta pro mês
+          seguinte — ex.: corte 25, algo lançado em 26/08 entra na
+          competência de setembro. Cartão de crédito não é afetado: continua
+          só pelo &quot;Dia de fechamento&quot; de cada cartão (tela Formas
+          de pagamento).
+        </small>
+      </Field>
+      <SalvarBtn type="submit" disabled={enviando} style={{ width: "fit-content" }}>
+        {enviando ? "Salvando..." : "Salvar dia de corte"}
+      </SalvarBtn>
+    </form>
   );
 }
 

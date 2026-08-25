@@ -7,7 +7,9 @@ precisam poder se excluir — @requer_grupo bloquearia esse caso com 404
 from flask import Blueprint, request, g
 
 from middlewares.ensure_authenticated import ensure_authenticated
-from services.conta import excluir_conta, get_meu_status, marcar_tutorial_visto, atualizar_tema
+from services.conta import (
+    excluir_conta, get_meu_status, marcar_tutorial_visto, atualizar_tema, atualizar_dia_corte,
+)
 from utils.app_error import AppError
 
 bp = Blueprint("conta", __name__, url_prefix="/api/conta")
@@ -52,3 +54,15 @@ def tema():
         raise AppError("Cadastro ainda não concluído.", 404, "sem_grupo")
     dados = request.get_json(silent=True) or {}
     return atualizar_tema(g.usuario_id, dados.get("tema", ""))
+
+
+@bp.route("/dia-corte", methods=["PUT"])
+@ensure_authenticated
+def dia_corte():
+    """"Dia do pagamento" (migração 028) — mesmo raciocínio de tema(): sem
+    @requer_grupo, conta individual também configura. dia_fechamento do
+    cartão continua em routes/formas.py, sem relação com isto."""
+    if not g.usuario_id:
+        raise AppError("Cadastro ainda não concluído.", 404, "sem_grupo")
+    dados = request.get_json(silent=True) or {}
+    return atualizar_dia_corte(g.usuario_id, dados.get("dia_corte"))

@@ -392,15 +392,16 @@ def listar_contas_mes(usuario_id: int, mes: str = None) -> dict:
 
 
 def _linhas_entradas(conn, gid, usuario_id, mes_alvo: date) -> list[dict]:
-    """Coluna "Entradas" da planilha. Entrada usa `data` direto (não tem
-    competência — salário não tem fatura), igual services/entradas.py."""
+    """Coluna "Entradas" da planilha. Entrada tem `competencia` própria
+    desde a migração 028 (dia_corte do usuário — salário não tem fatura,
+    mas tem "mês do recebimento" igual gasto tem "mês da fatura")."""
     escopo, params = _filtro_escopo(gid, usuario_id, alias="e")
     with conn.cursor() as cur:
         cur.execute(
             f"""SELECT e.id, e.descricao, e.valor, e.data
                 FROM entradas e
                 WHERE {escopo}
-                  AND DATE_TRUNC('month', e.data) = DATE_TRUNC('month', %s::date)
+                  AND DATE_TRUNC('month', e.competencia) = DATE_TRUNC('month', %s::date)
                 ORDER BY e.data, e.descricao""",
             params + [mes_alvo],
         )

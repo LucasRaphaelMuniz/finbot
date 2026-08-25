@@ -16,7 +16,7 @@ from datetime import date
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from parser import extrair_parcelas
-from services.competencia import calcular_competencia, mes_vencimento, somar_meses
+from services.competencia import calcular_competencia, dia_regra, mes_vencimento, somar_meses
 from services.parcelamento import dividir_parcelas, formatar_competencia
 
 
@@ -106,6 +106,50 @@ def test_mes_vencimento_vencimento_antes_do_fechamento_mes_seguinte():
 
 def test_mes_vencimento_vira_o_ano():
     assert mes_vencimento(date(2026, 12, 1), 25, 5) == date(2027, 1, 1)
+
+
+# ---------------------------------------------------------------------------
+# dia_regra + calcular_competencia com dia_corte — migração 028 (pedido do
+# Lucas em 25/08/2026: "recebo dia 25 ... não é mês fechado, é 25/08 até
+# 25/09"). Cartão continua só por dia_fechamento; sem cartão, cai pro
+# dia_corte do usuário em vez do mês calendário.
+# ---------------------------------------------------------------------------
+
+def test_dia_regra_cartao_manda_sobre_o_corte():
+    assert dia_regra(10, 25) == 10
+
+
+def test_dia_regra_sem_cartao_cai_pro_corte():
+    assert dia_regra(None, 25) == 25
+
+
+def test_dia_regra_sem_os_dois_e_none():
+    assert dia_regra(None, None) is None
+
+
+def test_competencia_sem_cartao_antes_do_corte_fica_no_mes_atual():
+    # dia_corte=25 (recebimento), lançamento dia 20 -> ainda dentro do ciclo
+    assert calcular_competencia(date(2026, 8, 20), dia_regra(None, 25)) == date(2026, 8, 1)
+
+
+def test_competencia_sem_cartao_no_dia_exato_do_corte_fica_no_mes_atual():
+    assert calcular_competencia(date(2026, 8, 25), dia_regra(None, 25)) == date(2026, 8, 1)
+
+
+def test_competencia_sem_cartao_depois_do_corte_vai_pro_mes_seguinte():
+    # 26/08 com corte=25 -> já é o ciclo 25/08-25/09, competência setembro
+    assert calcular_competencia(date(2026, 8, 26), dia_regra(None, 25)) == date(2026, 9, 1)
+
+
+def test_competencia_cartao_ignora_o_corte_do_usuario():
+    # fechamento dia 10 do cartão manda, não importa o dia_corte=25 do usuário
+    assert calcular_competencia(date(2026, 8, 26), dia_regra(10, 25)) == date(2026, 9, 1)
+    assert calcular_competencia(date(2026, 8, 5), dia_regra(10, 25)) == date(2026, 8, 1)
+
+
+def test_competencia_sem_dia_corte_configurado_e_mes_calendario():
+    # comportamento anterior à migração 028 (fallback de dado legado)
+    assert calcular_competencia(date(2026, 8, 26), dia_regra(None, None)) == date(2026, 8, 1)
 
 
 # ---------------------------------------------------------------------------
