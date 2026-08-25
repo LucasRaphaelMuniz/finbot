@@ -81,17 +81,35 @@ def cmd_saldo(usuario_id: int, mensagem: str) -> str:
             gasto  = float(f["gasto_mes"])
             limite = float(f["limite_mensal"]) if f["limite_mensal"] else None
 
+        # Forma sem limite (ex.: Custos Fixos) não tem "saldo" de verdade
+        # pra comparar — pedido do Lucas em 25/08/2026: tirar a linha
+        # "Total: X gastos este mês" daqui; a composição desse total
+        # aparece detalhada por categoria no /resumo, não precisa duplicar
+        # aqui.
         if limite:
             sobra = limite - gasto
             pct   = (gasto / limite) * 100
             linhas.append(f"*Saldo Disponível: {_brl(sobra)}*")
             linhas.append(f"Total: {_brl(gasto)} / {_brl(limite)}")
+
+            # Projeção Fatura (25/08/2026, pedido do Lucas): pra onde a
+            # fatura atual deve fechar — real lançado (compras avulsas E
+            # parcelas do mês, já reais desde o momento da compra) + as
+            # despesas fixas/recorrentes DAQUELE cartão que ainda não foram
+            # lançadas nessa competência. SEMPRE aparece pra cartão, mesmo
+            # igual ao Total (sinaliza "nada pendente pra entrar ainda") —
+            # 26/08/2026: antes só aparecia com pendência, o Lucas queria
+            # a linha fixa logo depois do Total, antes dos alertas de
+            # limite.
+            if status:
+                linhas.append(
+                    f"📈 Projeção Fatura: {_brl(status['fatura_atual_estimada'])}"
+                )
+
             if gasto > limite:
                 linhas.append("🚨 Limite ultrapassado!")
             elif pct >= 80:
                 linhas.append(f"⚠️ {pct:.0f}% do limite usado")
-        else:
-            linhas.append(f"Total: {_brl(gasto)} gastos este mês")
 
         if status:
             # Fatura anterior: só mostra "a pagar" se ainda não foi marcada
@@ -102,13 +120,6 @@ def cmd_saldo(usuario_id: int, mensagem: str) -> str:
                 mes_venc = status["vencimento_fatura_anterior"][:7]
                 linhas.append(
                     f"🧾 Fatura anterior a pagar em {mes_venc}: {_brl(status['fatura_anterior'])}"
-                )
-            # Projeção Fatura (25/08/2026, pedido do Lucas): pra onde a
-            # fatura atual deve fechar — real lançado + despesas fixas
-            # daquele cartão ainda não lançadas nessa competência.
-            if status["fixas_previstas_qtd"] > 0:
-                linhas.append(
-                    f"📈 Projeção Fatura: {_brl(status['fatura_atual_estimada'])}"
                 )
 
     return "\n".join(linhas)
