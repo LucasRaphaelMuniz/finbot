@@ -26,7 +26,7 @@ from services.categorias import get_categorias as get_categorias_usuario
 from services.despesas_fixas import lancar_despesas_fixas_do_mes
 from services.entradas_fixas import lancar_entradas_fixas_do_mes
 from services.webhook_seguranca import validar_apikey, verificar_e_marcar_duplicata, passou_rate_limit
-from parser import parece_gasto_ou_comando
+from parser import parece_ruido
 from utils.app_error import AppError
 from utils.logging_config import obter_logger
 from utils.telefone import normalizar as _normalizar_jid
@@ -217,14 +217,38 @@ def obter_telefone_e_jid(data: dict) -> tuple[str | None, str]:
 
     Evolution API v2 com multi-device usa @lid em participant, mas disponibiliza
     participantAlt (dentro de key) com o número real no formato @s.whatsapp.net.
+
+    Corrigido em 29/08/2026 (print do Lucas: mensagem de grupo mandada pela
+    "Amor" nunca gerava resposta nenhuma — nem erro, nem "não entendi",
+    silêncio total, sem log nenhum). Causa: quando a Evolution API NÃO
+    populava participantAlt pra esse contato (comportamento visto antes só
+    pro remoteJid de mensagem direta, mas que também acontece com
+    participant em grupo), `participant` sozinho é um @lid — e
+    `utils.telefone.normalizar` descarta qualquer string com "@lid" de
+    propósito (não representa uma pessoa identificável). Telefone virava
+    None e a mensagem morria na checagem `if not telefone` do webhook, sem
+    nenhum log — impossível de diagnosticar depois.
+    Fix: mesmo fallback que a mensagem direta já tinha pra esse cenário —
+    tenta `data.get("sender")` antes de desistir.
     """
     key    = data.get("key", {})
     remote = key.get("remoteJid", "")
 
     if remote.endswith("@g.us"):
-        # Mensagem de grupo: prefere participantAlt (número real) sobre participant (@lid)
+        # Mensagem de grupo: prefere participantAlt (número real) sobre
+        # participant (@lid); se nenhum dos dois normalizar, tenta "sender"
+        # (mesmo campo que já resolvia esse caso em mensagem direta).
         participant = key.get("participantAlt") or key.get("participant", "")
-        return _normalizar_jid(participant), remote
+        telefone = _normalizar_jid(participant)
+        if not telefone:
+            telefone = _normalizar_jid(data.get("sender", ""))
+        if not telefone:
+            logger.warning(
+                "Webhook de grupo sem telefone identificável — "
+                f"participant={participant!r} sender={data.get('sender')!r} "
+                f"pushName={data.get('pushName')!r}"
+            )
+        return telefone, remote
 
     # Mensagem direta
     telefone = _normalizar_jid(remote)
@@ -232,6 +256,11 @@ def obter_telefone_e_jid(data: dict) -> tuple[str | None, str]:
         # remoteJid é @lid: usa sender (campo no data, não no key)
         sender   = data.get("sender", "")
         telefone = _normalizar_jid(sender)
+    if not telefone:
+        logger.warning(
+            f"Webhook direto sem telefone identificável — remoteJid={remote!r} "
+            f"sender={data.get('sender')!r} pushName={data.get('pushName')!r}"
+        )
     return telefone, (telefone or remote)
 
 
@@ -304,11 +333,26 @@ def webhook(event_path=None):
     texto = obter_texto(msg)
     if texto:
         texto = texto.strip()
-        # Fase 7.4 — em grupo real do WhatsApp (P4: grupo continua
-        # suportado), só processa se parecer gasto/comando; chit-chat comum
-        # do grupo não deve acionar o fallback de IA (custo de LLM por
-        # mensagem não dirigida ao bot). Mensagem direta (1:1) sempre processa.
-        if eh_grupo_whatsapp and not parece_gasto_ou_comando(texto):
+        # Fase 7.4, revisada em 29/08/2026 — em grupo real do WhatsApp (P4:
+        # grupo continua suportado), evita gastar 1 chamada de IA em
+        # chit-chat que não é dirigido ao bot ("kkkk", "❤️", "ok").
+        #
+        # Até aqui o filtro era o oposto: só deixava passar quem começasse
+        # com um prefixo de comando fixo (_COMANDOS_CONHECIDOS, uma 3ª cópia
+        # da mesma lista que já existia em handler.py e services/ai_fallback.py,
+        # e que tinha ficado pra trás — nem tinha "contas", "limite" etc).
+        # Bug real (29/08/2026, print do Lucas): "Paguei a fatura do cartão"
+        # mandado no grupo não bate em nenhum prefixo nem tem valor, então
+        # nunca chegava a chamar processar_mensagem — nem a IA, nem o "não
+        # entendi" do handler rodavam, silêncio total ANTES de qualquer
+        # lógica de resposta.
+        #
+        # Mesma regra já usada dentro do handler pra sessão pendente (pedido
+        # do Lucas: "não deve existir possibilidade de ficar sem resposta"):
+        # inverte o filtro — só ignora ruído ÓBVIO (parser.parece_ruido),
+        # deixa a IA decidir tudo o mais. Mensagem direta (1:1) sempre
+        # processava e continua processando, sem passar por este filtro.
+        if eh_grupo_whatsapp and parece_ruido(texto):
             return "", 200
         resposta = processar_mensagem(telefone, texto)
 
