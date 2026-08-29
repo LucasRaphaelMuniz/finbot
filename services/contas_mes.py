@@ -48,6 +48,8 @@ editável — por isso `marcar_conta` a rejeita explicitamente (400) e só
 """
 
 import calendar
+import re
+import unicodedata
 from datetime import date
 
 from db import get_conn, _get_grupo_id, get_formas_pagamento
@@ -432,6 +434,73 @@ def _linhas_entradas(conn, gid, usuario_id, mes_alvo: date) -> list[dict]:
             # editar_valor_conta (que reusa services.entradas.atualizar_entrada).
             "editavel": True,
         } for r in cur.fetchall()]
+
+
+# ---------------------------------------------------------------------------
+# Busca por texto livre (29/08/2026, pedido do Lucas: "paguei a fatura do
+# cartão" via WhatsApp) — usada por handler.py depois que a IA identifica a
+# intenção 'marcar_conta_paga'; a IA nunca resolve a chave sozinha, só o
+# texto bruto, e é aqui que ele vira uma ou mais contas reais do board.
+# ---------------------------------------------------------------------------
+
+_PALAVRAS_IGNORADAS_BUSCA = {
+    "a", "o", "as", "os", "de", "da", "do", "das", "dos", "e", "ja", "já",
+    "paguei", "pagar", "pagamento", "pago", "paga", "conta", "esse", "essa",
+    "este", "esta", "hoje", "agora", "meu", "minha",
+}
+
+# "fatura"/"cartão"/"crédito" não precisam bater literalmente na descrição —
+# a linha do board é "Fatura {nome do cartão}" (ex: "Fatura CRÉDITO"), então
+# "paguei a fatura do cartão" sem citar o banco já deve casar com qualquer
+# fatura em aberto.
+_PALAVRAS_FATURA = {"fatura", "cartao", "cartão", "credito", "crédito"}
+
+
+def _normalizar(texto: str) -> str:
+    sem_acento = unicodedata.normalize("NFKD", texto or "").encode("ascii", "ignore").decode("ascii")
+    return sem_acento.lower()
+
+
+def _tokens_significativos(texto: str) -> set[str]:
+    normalizado = _normalizar(texto)
+    return {t for t in re.findall(r"[a-z0-9]+", normalizado)
+            if t not in _PALAVRAS_IGNORADAS_BUSCA}
+
+
+def buscar_contas_abertas(usuario_id: int, texto: str, mes: str = None) -> list[dict]:
+    """
+    Casa `texto` (ex.: "a fatura do cartão", "o consórcio") contra as contas
+    NÃO PAGAS do board do mês, por interseção de palavras (sem acento,
+    minúsculo) — mesma ideia de `services/ai_fallback.py::_resolver_por_nome`,
+    mas aqui pode devolver MAIS de um resultado de propósito: quando há
+    empate no placar (ex.: dois cartões em aberto, ou "Tim" batendo em "Tim
+    (Lucas)" e "Tim (Yasmin)"), quem chama pede pra pessoa escolher — nunca
+    marca a conta errada como paga só porque veio primeiro numa lista.
+
+    Retorna [] se `texto` não tem nenhuma palavra significativa, ou se nada
+    bateu. Retorna só os candidatos com a MAIOR pontuação (ignora os piores),
+    então 1 resultado = sem ambiguidade, 2+ = ambiguidade real.
+    """
+    tokens_busca = _tokens_significativos(texto)
+    if not tokens_busca:
+        return []
+
+    menciona_fatura = bool(tokens_busca & _PALAVRAS_FATURA)
+    a_pagar = listar_contas_mes(usuario_id, mes)["a_pagar"]
+
+    pontuados = []
+    for conta in a_pagar:
+        tokens_conta = _tokens_significativos(conta["descricao"])
+        intersecao = tokens_busca & tokens_conta
+        bate_fatura = menciona_fatura and conta["tipo"] == "fatura"
+        pontos = len(intersecao) + (1 if bate_fatura else 0)
+        if pontos > 0:
+            pontuados.append((pontos, conta))
+
+    if not pontuados:
+        return []
+    melhor = max(p for p, _ in pontuados)
+    return [c for p, c in pontuados if p == melhor]
 
 
 # ---------------------------------------------------------------------------

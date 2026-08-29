@@ -151,6 +151,18 @@ def interpretar_mensagem(texto: str, categorias: list[dict], formas: list[dict])
                        bater em nenhuma categoria real do usuário, cai em
                        'indefinido' (mesma lógica anti-alucinação do
                        'comando').
+    - 'consulta_contas' -> {'intencao': 'consulta_contas'} — "quais são as
+                       contas do mês?" (29/08/2026). Sem parâmetro nenhum: o
+                       handler chama comandos.py::cmd_contas(uid) direto,
+                       mesma função que o comando digitado *contas* usa.
+    - 'marcar_conta_paga' -> {'intencao': 'marcar_conta_paga', 'texto': str}
+                       — "paguei a fatura do cartão" (29/08/2026). Devolve o
+                       TEXTO ORIGINAL, não uma chave: quem resolve qual conta
+                       é (e lida com ambiguidade) é
+                       services/contas_mes.py::buscar_contas_abertas, chamado
+                       pelo handler — a IA aqui só decide que a INTENÇÃO é
+                       "estou avisando que paguei algo", nunca qual conta
+                       exatamente (ela não tem a lista de contas em aberto).
     - 'indefinido' -> IA não conseguiu deduzir nada útil (ou a chamada falhou,
                        ou sugeriu um comando fora do vocabulário conhecido)
     """
@@ -211,6 +223,12 @@ def interpretar_mensagem(texto: str, categorias: list[dict], formas: list[dict])
             )
             return {"intencao": "indefinido"}
         return {"intencao": "consulta_dados", "categoria": categoria}
+
+    if intencao == "consulta_contas":
+        return {"intencao": "consulta_contas"}
+
+    if intencao == "marcar_conta_paga":
+        return {"intencao": "marcar_conta_paga", "texto": texto}
 
     return {"intencao": "indefinido"}
 

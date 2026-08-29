@@ -80,7 +80,8 @@ from parser import (
     limpar_descricao,
     extrair_data,
 )
-from comandos import cmd_saldo, cmd_resumo, cmd_limite, cmd_ajuda, cmd_gastos
+from comandos import cmd_saldo, cmd_resumo, cmd_limite, cmd_ajuda, cmd_gastos, cmd_contas
+from services.contas_mes import buscar_contas_abertas, marcar_conta
 
 
 def _brl(valor: float) -> str:
@@ -185,6 +186,8 @@ def _despachar_comando(uid: int, mensagem: str) -> str | None:
         return cmd_limite(uid, lower)
     if lower == "gastos":
         return cmd_gastos(uid)
+    if lower == "contas":
+        return cmd_contas(uid)
     # "desfazer" (29/08/2026, print do Lucas): sinônimo determinístico de
     # "excluir ultimo". Sem isso, "desfazer" não bate em nenhum prefixo
     # aqui, extrair_valor devolve None, e a mensagem cai inteira no
@@ -238,7 +241,7 @@ def _despachar_comando(uid: int, mensagem: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 _PREFIXOS_NOVA_INTENCAO = (
-    "saldo", "resumo", "gastos", "ajuda", "excluir", "editar ultimo",
+    "saldo", "resumo", "gastos", "contas", "ajuda", "excluir", "editar ultimo",
     "forma ", "categoria ", "fixa ", "entrada ", "apelido ",
     "vincular ", "grupo", "limite ", "desfazer", "desfaz",
 )
@@ -730,6 +733,18 @@ def _processar_resultado_classificacao(uid: int, resultado: dict) -> str | None:
     if intencao == "consulta_dados":
         return _responder_consulta_dados(uid, resultado["categoria"])
 
+    # 29/08/2026 — "quais são as contas do mês?": mesma resposta do comando
+    # digitado *contas*, só que reconhecida em linguagem natural. Leitura
+    # pura, sem sessão.
+    if intencao == "consulta_contas":
+        return cmd_contas(uid)
+
+    # 29/08/2026 — "paguei a fatura do cartão": NUNCA marca direto (mexe em
+    # dinheiro já fechado) — sempre passa por _propor_marcar_conta_paga, que
+    # pede confirmação (ou escolha, se ambíguo) antes de gravar.
+    if intencao == "marcar_conta_paga":
+        return _propor_marcar_conta_paga(uid, resultado["texto"])
+
     return None
 
 
@@ -833,6 +848,92 @@ def _propor_confirmacao_comando(uid: int, resultado: dict) -> str:
     )
 
 
+def _propor_marcar_conta_paga(uid: int, texto: str) -> str:
+    """
+    Resolve intencao='marcar_conta_paga' (29/08/2026, "paguei a fatura do
+    cartão"). services/contas_mes.py::buscar_contas_abertas casa o texto
+    contra as contas em aberto e pode devolver:
+    - 0 contas: nada bate, devolve direto sem criar sessão.
+    - 1 conta: sem ambiguidade, pula pra confirmação.
+    - 2+ contas: empate no placar de match (ex: dois cartões em aberto) —
+      pede pra escolher por número antes de confirmar. Decisão do Lucas ao
+      definir esta feature: nunca marcar a primeira que bateu, sempre
+      perguntar quando não há certeza.
+    """
+    candidatas = buscar_contas_abertas(uid, texto)
+
+    if not candidatas:
+        return (
+            f'🤔 Não achei nenhuma conta em aberto parecida com "{texto.strip()}".\n\n'
+            "Veja o que está pendente com *contas*, ou descreva de outro jeito."
+        )
+
+    if len(candidatas) == 1:
+        return _propor_confirmacao_conta_paga(uid, candidatas[0])
+
+    criar_sessao(
+        uid,
+        etapa="aguardando_escolha_conta_paga",
+        dados_temp={"opcoes": [
+            {"chave": c["chave"], "descricao": c["descricao"], "valor": c["valor"]}
+            for c in candidatas
+        ]},
+        timeout_minutos=5,
+    )
+    linhas = ["🤔 Achei mais de uma conta parecida — qual você pagou?", ""]
+    for i, c in enumerate(candidatas, start=1):
+        linhas.append(f"{i}. {c['descricao']} — {_brl(c['valor'])}")
+    linhas.append("")
+    linhas.append("_Responda com o número, ou *não* pra cancelar._")
+    return "\n".join(linhas)
+
+
+def _propor_confirmacao_conta_paga(uid: int, conta: dict) -> str:
+    criar_sessao(
+        uid,
+        etapa="aguardando_confirmacao_conta_paga",
+        dados_temp={"chave": conta["chave"], "descricao": conta["descricao"], "valor": conta["valor"]},
+        timeout_minutos=5,
+    )
+    return (
+        f"🤔 Marcar *{conta['descricao']}* ({_brl(conta['valor'])}) como paga?\n\n"
+        "Responda *sim* ou *não*."
+    )
+
+
+def _processar_escolha_conta_paga(uid: int, sessao: dict, mensagem: str) -> str:
+    if eh_negativo(mensagem):
+        deletar_sessao(uid)
+        return "👍 Ok, nada foi marcado."
+
+    dados  = get_dados_temp(sessao)
+    opcoes = dados.get("opcoes") or []
+    txt    = mensagem.strip()
+
+    if not txt.isdigit():
+        return _fora_do_esperado(uid, mensagem)
+    idx = int(txt) - 1
+    if not (0 <= idx < len(opcoes)):
+        return _fora_do_esperado(uid, mensagem)
+
+    deletar_sessao(uid)
+    return _propor_confirmacao_conta_paga(uid, opcoes[idx])
+
+
+def _processar_confirmacao_conta_paga(uid: int, sessao: dict, mensagem: str) -> str:
+    if not eh_afirmativo(mensagem):
+        deletar_sessao(uid)
+        return "👍 Ok, nada foi marcado."
+
+    dados = get_dados_temp(sessao)
+    deletar_sessao(uid)
+    try:
+        marcar_conta(uid, dados["chave"], pago=True)
+    except AppError as exc:
+        return f"❌ {exc.mensagem}"
+    return f"✅ *{dados['descricao']}* ({_brl(dados['valor'])}) marcada como paga."
+
+
 # ---------------------------------------------------------------------------
 # Cenário 2 — fluxo guiado
 # ---------------------------------------------------------------------------
@@ -902,6 +1003,12 @@ def _processar_sessao(uid: int, sessao: dict, mensagem: str) -> str:
 
     if etapa == "aguardando_confirmacao_comando":
         return _processar_confirmacao_comando(uid, sessao, mensagem)
+
+    if etapa == "aguardando_escolha_conta_paga":
+        return _processar_escolha_conta_paga(uid, sessao, mensagem)
+
+    if etapa == "aguardando_confirmacao_conta_paga":
+        return _processar_confirmacao_conta_paga(uid, sessao, mensagem)
 
     return "❓ Sessão inválida. Envie um novo valor para começar."
 

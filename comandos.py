@@ -4,6 +4,7 @@ from datetime import date as _date, datetime
 from db import (get_saldo_todas_formas, get_resumo_mes, atualizar_limite,
                  get_ultimos_gastos, get_formas_pagamento, get_conn, _get_dia_corte)
 from services.competencia import calcular_competencia, dia_corte_como_fechamento
+from services.contas_mes import listar_contas_mes
 from services.entradas import get_total_entradas_mes
 from services.faturas import status_cartao
 
@@ -186,6 +187,45 @@ def cmd_saldo(usuario_id: int, mensagem: str) -> str:
     return "\n".join(linhas)
 
 
+def cmd_contas(usuario_id: int) -> str:
+    """
+    "Contas do mês" no bot (29/08/2026, pedido do Lucas: "preciso de uma
+    inteligencia para entender comandos pelo whats... quais sao as contas do
+    mes?"). Reusa services/contas_mes.py::listar_contas_mes — a mesma função
+    que monta a tela do site — de propósito: bot e site nunca podem mostrar
+    números diferentes pra a mesma pergunta.
+    """
+    board = listar_contas_mes(usuario_id)
+    ano, mes_num = (int(p) for p in board["mes"].split("-"))
+    mes_label = f"{_MESES_PT[mes_num]}/{ano}"
+
+    linhas = [f"🧾 *Contas do mês — {mes_label}*"]
+
+    linhas.append("")
+    linhas.append(f"🔴 *Não pagas ({_brl(board['totais']['a_pagar'])}):*")
+    if board["a_pagar"]:
+        for c in board["a_pagar"]:
+            linhas.append(f"• {c['descricao']} — {_brl(c['valor'])}")
+    else:
+        linhas.append("_nenhuma 🎉_")
+
+    linhas.append("")
+    linhas.append(f"🟢 *Pagas ({_brl(board['totais']['pago'])}):*")
+    if board["pagas"]:
+        for c in board["pagas"]:
+            # Fatura paga com valor diferente do que fechou: mostra o que
+            # SAIU do caixa (valor_pago), não o valor bruto da fatura — mesmo
+            # critério de totais["pago"] em listar_contas_mes.
+            valor = c["valor_pago"] if c["valor_pago"] is not None else c["valor"]
+            linhas.append(f"• {c['descricao']} — {_brl(valor)}")
+    else:
+        linhas.append("_nenhuma ainda_")
+
+    linhas.append("")
+    linhas.append(f"💰 Sobra do mês: {_brl(board['totais']['sobra'])}")
+    return "\n".join(linhas)
+
+
 def cmd_resumo(usuario_id: int) -> str:
     gastos          = get_resumo_mes(usuario_id)
     total_entradas  = get_total_entradas_mes(usuario_id)
@@ -303,6 +343,10 @@ def cmd_ajuda() -> str:
         "• *grupo add 44912345678* — adiciona membro ao grupo\n"
         "• *grupo* — mostra o grupo e os membros\n"
         "• *grupo sair* — sai do grupo\n\n"
+        "🧾 *Contas do mês (fale normal):*\n"
+        "_\"quais são as contas do mês?\"_ — lista o que falta pagar e o que "
+        "já foi pago\n"
+        "_\"paguei a fatura do cartão\"_ — marca como paga (eu confirmo antes)\n\n"
         "👤 *Perfil:*\n"
         "• *apelido SeuNome* — define seu nome no bot\n\n"
         "ℹ️ *ajuda* — este menu\n\n"
