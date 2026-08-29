@@ -103,9 +103,13 @@ function StatusCartao({ forma, onErro, onAjustado }) {
   // fatura_atual (real, já lançado + ajuste) e fatura_atual_estimada (real +
   // despesas fixas desse cartão ainda não lançadas nessa competência).
   const { dados: status, loading, refetch } = useApi(`/formas/${forma.id}/status-cartao`);
-  const [editandoAjuste, setEditandoAjuste] = useState(false);
 
   if (loading || !status) return <p style={{ opacity: 0.7 }}>Carregando...</p>;
+
+  function aoAjustar() {
+    refetch();
+    onAjustado();
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 320 }}>
@@ -131,41 +135,74 @@ function StatusCartao({ forma, onErro, onAjustado }) {
         detalhe={`vence em ${status.vencimento_fatura_anterior || "—"}`}
       />
 
-      <div style={{ borderTop: "1px solid rgba(128,128,128,0.25)", paddingTop: 12 }}>
-        {editandoAjuste ? (
-          <AjusteFaturaForm
-            forma={forma}
-            competencia={status.competencia_atual}
-            ajusteAtual={status.ajuste_fatura_atual}
-            motivoAtual={status.ajuste_motivo_atual}
-            onSalvo={() => {
-              setEditandoAjuste(false);
-              refetch();
-              onAjustado();
-            }}
-            onErro={onErro}
-            onCancelar={() => setEditandoAjuste(false)}
-          />
-        ) : (
-          <>
-            <p style={{ fontSize: 13, opacity: 0.8 }}>
-              Ajuste manual da fatura atual:{" "}
-              <strong>{brl(status.ajuste_fatura_atual || 0)}</strong>
-              {status.ajuste_motivo_atual ? ` — ${status.ajuste_motivo_atual}` : ""}
-            </p>
-            <small style={{ opacity: 0.7 }}>
-              Some por cima do total calculado — use quando o banco fecha a
-              fatura com juros, IOF ou arredondamento que não vira um gasto
-              lançado.
-            </small>
-            <div style={{ marginTop: 8 }}>
-              <button type="button" onClick={() => setEditandoAjuste(true)}>
-                {status.ajuste_fatura_atual ? "Editar ajuste" : "Adicionar ajuste"}
-              </button>
-            </div>
-          </>
-        )}
-      </div>
+      {/* 29/08/2026 (pedido do Lucas): o ajuste manual (migração 028) sempre
+          pôde mirar qualquer competência — services/faturas.py::status_cartao
+          já calcula e devolve ajuste_fatura_anterior/ajuste_motivo_anterior,
+          e a rota PUT /ajuste-fatura já aceita `competencia` livre. O que
+          faltava era o botão: só existia UM bloco de ajuste aqui, sempre
+          preso à fatura ATUAL — não tinha como o usuário mirar a fatura que
+          JÁ FECHOU (a que está "a pagar" acima). Dois blocos agora, cada um
+          com sua própria competência/estado — a fatura anterior é editável
+          igual à atual, sem duplicar lógica (AjusteFaturaBloco). */}
+      <AjusteFaturaBloco
+        titulo="fatura atual"
+        forma={forma}
+        competencia={status.competencia_atual}
+        ajusteAtual={status.ajuste_fatura_atual}
+        motivoAtual={status.ajuste_motivo_atual}
+        onAjustado={aoAjustar}
+        onErro={onErro}
+      />
+      <AjusteFaturaBloco
+        titulo="fatura anterior (já fechada)"
+        forma={forma}
+        competencia={status.competencia_anterior}
+        ajusteAtual={status.ajuste_fatura_anterior}
+        motivoAtual={status.ajuste_motivo_anterior}
+        onAjustado={aoAjustar}
+        onErro={onErro}
+      />
+    </div>
+  );
+}
+
+function AjusteFaturaBloco({ titulo, forma, competencia, ajusteAtual, motivoAtual, onAjustado, onErro }) {
+  const [editando, setEditando] = useState(false);
+
+  return (
+    <div style={{ borderTop: "1px solid rgba(128,128,128,0.25)", paddingTop: 12 }}>
+      {editando ? (
+        <AjusteFaturaForm
+          forma={forma}
+          competencia={competencia}
+          ajusteAtual={ajusteAtual}
+          motivoAtual={motivoAtual}
+          onSalvo={() => {
+            setEditando(false);
+            onAjustado();
+          }}
+          onErro={onErro}
+          onCancelar={() => setEditando(false)}
+        />
+      ) : (
+        <>
+          <p style={{ fontSize: 13, opacity: 0.8 }}>
+            Ajuste manual da {titulo}:{" "}
+            <strong>{brl(ajusteAtual || 0)}</strong>
+            {motivoAtual ? ` — ${motivoAtual}` : ""}
+          </p>
+          <small style={{ opacity: 0.7 }}>
+            Some por cima do total calculado — use quando o banco fecha a
+            fatura com juros, IOF ou arredondamento que não vira um gasto
+            lançado.
+          </small>
+          <div style={{ marginTop: 8 }}>
+            <button type="button" onClick={() => setEditando(true)}>
+              {ajusteAtual ? "Editar ajuste" : "Adicionar ajuste"}
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
