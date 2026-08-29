@@ -156,13 +156,36 @@ def interpretar_mensagem(texto: str, categorias: list[dict], formas: list[dict])
                        handler chama comandos.py::cmd_contas(uid) direto,
                        mesma função que o comando digitado *contas* usa.
     - 'marcar_conta_paga' -> {'intencao': 'marcar_conta_paga', 'texto': str}
-                       — "paguei a fatura do cartão" (29/08/2026). Devolve o
-                       TEXTO ORIGINAL, não uma chave: quem resolve qual conta
-                       é (e lida com ambiguidade) é
+                       — "paguei a fatura do cartão". Devolve o TEXTO
+                       ORIGINAL, não uma chave: quem resolve qual conta é (e
+                       lida com ambiguidade) é
                        services/contas_mes.py::buscar_contas_abertas, chamado
                        pelo handler — a IA aqui só decide que a INTENÇÃO é
                        "estou avisando que paguei algo", nunca qual conta
                        exatamente (ela não tem a lista de contas em aberto).
+    - 'marcar_todas_pagas' -> {'intencao': 'marcar_todas_pagas'} — "todas as
+                       contas já foram pagas". Sem parâmetro: o handler busca
+                       a lista INTEIRA de contas em aberto do mês e propõe
+                       marcar todas de uma vez, sempre com confirmação
+                       mostrando cada uma antes de gravar (nunca marca
+                       direto).
+
+    Essas duas últimas (29/08/2026) chegam da IA como UM intent só,
+    'marcar_contas_pagas', com um campo 'todas' (bool) — não dois intents
+    separados. Motivo (feedback direto do Lucas: "toda particularidade vamos
+    precisar ajustar o código, e a IA nunca é usada de forma útil"): se cada
+    jeito novo de dizer "já paguei" (uma conta, todas, "tá tudo quitado",
+    etc.) virasse um intent próprio no enum do prompt, toda frase nova de
+    fraseado diferente exigiria editar ai.py + aqui + handler.py de novo —
+    exatamente o problema que ele apontou. Com 'todas' como campo extraído
+    pela IA (não um valor fixo no enum), qualquer frase nova que já caiba
+    nesse mesmo FORMATO ("marcar 1 conta" vs "marcar tudo") passa a
+    funcionar sem eu tocar em código — só quando aparecer uma
+    PARTICULARIDADE DE VERDADE (ex.: marcar um SUBCONJUNTO — "paguei a
+    fatura e o consórcio, só falta o resto") é que vai precisar de um campo
+    ou intent novo, porque essa capacidade ainda não existe em código
+    nenhum lugar (nem aqui, nem no site) — isso nenhuma IA resolve sozinha,
+    sempre vai precisar de uma função nova que execute a ação.
     - 'indefinido' -> IA não conseguiu deduzir nada útil (ou a chamada falhou,
                        ou sugeriu um comando fora do vocabulário conhecido)
     """
@@ -227,8 +250,21 @@ def interpretar_mensagem(texto: str, categorias: list[dict], formas: list[dict])
     if intencao == "consulta_contas":
         return {"intencao": "consulta_contas"}
 
-    if intencao == "marcar_conta_paga":
-        return {"intencao": "marcar_conta_paga", "texto": texto}
+    # 'marcar_contas_pagas' é o intent único que a IA devolve (ver docstring
+    # acima) — aqui vira um dos dois formatos internos que handler.py já
+    # sabia tratar antes desta consolidação, então handler.py não precisou
+    # mudar nada.
+    if intencao == "marcar_contas_pagas":
+        if resultado.get("todas"):
+            return {"intencao": "marcar_todas_pagas"}
+        texto_alvo = resultado.get("descricao_conta")
+        if not texto_alvo or not str(texto_alvo).strip():
+            logger.warning(
+                "IA sugeriu marcar_contas_pagas (todas=false) sem "
+                "descricao_conta — descartado."
+            )
+            return {"intencao": "indefinido"}
+        return {"intencao": "marcar_conta_paga", "texto": str(texto_alvo).strip()}
 
     return {"intencao": "indefinido"}
 

@@ -30,6 +30,46 @@ def _mes_ano(usuario_id: int) -> str:
     competencia = calcular_competencia(_date.today(), dia_corte_como_fechamento(dia_corte))
     return f"{_MESES_PT[competencia.month]}/{competencia.year}"
 
+def _ciclo_corte(usuario_id: int, hoje: _date) -> tuple[int, int]:
+    """
+    (dias_no_ciclo, dia_no_ciclo) pro ritmo do Status em cmd_saldo — ciclo de
+    CORTE, não calendário puro (29/08/2026, correção do Lucas: o Status
+    comparava com "31 dias, dia 29" — agosto calendário — enquanto o
+    cabeçalho da própria mensagem já mostra a competência de setembro,
+    corte já aplicado; perto da virada do mês os dois divergem).
+
+    O ciclo da competência atual vai do dia (dia_corte + 1) do mês anterior
+    até o dia (dia_corte) do mês corrente — mesma fronteira de
+    services/competencia.py::calcular_competencia, só que aqui preciso das
+    DUAS pontas (não só do mês resultante) pra saber o tamanho do ciclo e em
+    que ponto dele "hoje" está. Sem dia_corte configurado, cai no calendário
+    puro — não há corte pra aplicar.
+    """
+    with get_conn() as conn:
+        dia_corte = _get_dia_corte(conn, usuario_id)
+    dc = dia_corte_como_fechamento(dia_corte)
+    if not dc:
+        return calendar.monthrange(hoje.year, hoje.month)[1], hoje.day
+
+    if hoje.day > dc:
+        ano_ini, mes_ini = hoje.year, hoje.month
+    elif hoje.month == 1:
+        ano_ini, mes_ini = hoje.year - 1, 12
+    else:
+        ano_ini, mes_ini = hoje.year, hoje.month - 1
+
+    dias_mes_ini = calendar.monthrange(ano_ini, mes_ini)[1]
+    cycle_start = _date(ano_ini, mes_ini, min(dc + 1, dias_mes_ini))
+
+    ano_fim, mes_fim = (ano_ini + 1, 1) if mes_ini == 12 else (ano_ini, mes_ini + 1)
+    dias_mes_fim = calendar.monthrange(ano_fim, mes_fim)[1]
+    cycle_end = _date(ano_fim, mes_fim, min(dc, dias_mes_fim))
+
+    dias_no_ciclo = (cycle_end - cycle_start).days + 1
+    dia_no_ciclo  = (hoje - cycle_start).days + 1
+    return dias_no_ciclo, dia_no_ciclo
+
+
 def _brl(valor: float) -> str:
     s = f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     return f"R$ {s}"
@@ -186,19 +226,16 @@ def cmd_saldo(usuario_id: int, mensagem: str) -> str:
         # limite não dá pra calcular ritmo esperado, então a linha some em
         # vez de mostrar um "Status" sem sentido.
         if orcamento_mensal > 0:
-            hoje = _date.today()
-            dias_no_mes = calendar.monthrange(hoje.year, hoje.month)[1]
-            gasto_esperado_ate_hoje = (orcamento_mensal / dias_no_mes) * hoje.day
+            dias_no_ciclo, dia_no_ciclo = _ciclo_corte(usuario_id, _date.today())
+            gasto_esperado_ate_hoje = (orcamento_mensal / dias_no_ciclo) * dia_no_ciclo
 
-            # Faixa de 5% de folga em vez de comparação estrita: ritmo bate
-            # "no risco" o dia inteiro por causa de arredondamento/hora do
-            # dia — sem a folga, "na média" praticamente nunca apareceria.
-            if total_gasto > gasto_esperado_ate_hoje * 1.05:
-                status_txt = "🔴 Gastos acima da média"
-            elif total_gasto < gasto_esperado_ate_hoje * 0.95:
-                status_txt = "🟢 Gastos abaixo da média"
+            # Só 2 estados (29/08/2026, pedido do Lucas — tirou o "na
+            # média" do meio). Sem 3ª faixa não tem mais "quase empatado"
+            # pra proteger com folga: acima do esperado é acima, ponto.
+            if total_gasto > gasto_esperado_ate_hoje:
+                status_txt = "🔴 Gasto acima do previsto"
             else:
-                status_txt = "🟡 Gastos na média"
+                status_txt = "🟢 Gasto dentro do orçamento"
             linhas.append(f"📅 Status: {status_txt}")
 
     return "\n".join(linhas)
@@ -363,7 +400,9 @@ def cmd_ajuda() -> str:
         "🧾 *Contas do mês (fale normal):*\n"
         "_\"quais são as contas do mês?\"_ — lista o que falta pagar e o que "
         "já foi pago\n"
-        "_\"paguei a fatura do cartão\"_ — marca como paga (eu confirmo antes)\n\n"
+        "_\"paguei a fatura do cartão\"_ — marca como paga (eu confirmo antes)\n"
+        "_\"todas as contas já foram pagas\"_ — marca todas de uma vez (eu "
+        "mostro a lista e confirmo antes)\n\n"
         "👤 *Perfil:*\n"
         "• *apelido SeuNome* — define seu nome no bot\n\n"
         "ℹ️ *ajuda* — este menu\n\n"

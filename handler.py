@@ -81,7 +81,7 @@ from parser import (
     extrair_data,
 )
 from comandos import cmd_saldo, cmd_resumo, cmd_limite, cmd_ajuda, cmd_gastos, cmd_contas
-from services.contas_mes import buscar_contas_abertas, marcar_conta
+from services.contas_mes import buscar_contas_abertas, listar_contas_mes, marcar_conta
 
 
 def _brl(valor: float) -> str:
@@ -745,6 +745,13 @@ def _processar_resultado_classificacao(uid: int, resultado: dict) -> str | None:
     if intencao == "marcar_conta_paga":
         return _propor_marcar_conta_paga(uid, resultado["texto"])
 
+    # 29/08/2026 — "todas as contas já foram pagas": diferente de
+    # marcar_conta_paga (aponta 1 conta por nome), aqui não há nome nenhum
+    # pra casar — busca a lista inteira de a_pagar e propõe marcar todas de
+    # uma vez, sempre com confirmação (mesma trava de segurança).
+    if intencao == "marcar_todas_pagas":
+        return _propor_marcar_todas_pagas(uid)
+
     return None
 
 
@@ -934,6 +941,65 @@ def _processar_confirmacao_conta_paga(uid: int, sessao: dict, mensagem: str) -> 
     return f"✅ *{dados['descricao']}* ({_brl(dados['valor'])}) marcada como paga."
 
 
+def _propor_marcar_todas_pagas(uid: int) -> str:
+    """
+    Resolve intencao='marcar_todas_pagas' (29/08/2026, "todas as contas já
+    foram pagas"). Mesma trava de segurança de _propor_marcar_conta_paga —
+    NUNCA marca direto: lista cada conta em aberto e pede UMA confirmação
+    pra todas juntas (decisão do Lucas ao definir esta feature) — errar o
+    "sim" aqui marca tudo de uma vez, mas confirmar 1 por 1 seria lento
+    demais pra uso real.
+    """
+    a_pagar = listar_contas_mes(uid)["a_pagar"]
+    if not a_pagar:
+        return "✅ Já está tudo pago este mês — nenhuma conta em aberto."
+
+    total = sum(c["valor"] for c in a_pagar)
+    criar_sessao(
+        uid,
+        etapa="aguardando_confirmacao_todas_pagas",
+        dados_temp={"contas": [
+            {"chave": c["chave"], "descricao": c["descricao"], "valor": c["valor"]}
+            for c in a_pagar
+        ]},
+        timeout_minutos=5,
+    )
+    linhas = [f"🤔 Marcar essas {len(a_pagar)} conta(s) como pagas?", ""]
+    for c in a_pagar:
+        linhas.append(f"• {c['descricao']} — {_brl(c['valor'])}")
+    linhas.append("")
+    linhas.append(f"Total: {_brl(total)}")
+    linhas.append("")
+    linhas.append("Responda *sim* ou *não*.")
+    return "\n".join(linhas)
+
+
+def _processar_confirmacao_todas_pagas(uid: int, sessao: dict, mensagem: str) -> str:
+    if not eh_afirmativo(mensagem):
+        deletar_sessao(uid)
+        return "👍 Ok, nada foi marcado."
+
+    dados  = get_dados_temp(sessao)
+    contas = dados.get("contas") or []
+    deletar_sessao(uid)
+
+    marcadas, falhas = [], []
+    for c in contas:
+        try:
+            marcar_conta(uid, c["chave"], pago=True)
+            marcadas.append(c)
+        except AppError as exc:
+            falhas.append((c, exc.mensagem))
+
+    linhas = [f"✅ {len(marcadas)} conta(s) marcada(s) como pagas."]
+    if falhas:
+        linhas.append("")
+        linhas.append(f"⚠️ {len(falhas)} não deu pra marcar:")
+        for c, erro in falhas:
+            linhas.append(f"• {c['descricao']} — {erro}")
+    return "\n".join(linhas)
+
+
 # ---------------------------------------------------------------------------
 # Cenário 2 — fluxo guiado
 # ---------------------------------------------------------------------------
@@ -1009,6 +1075,9 @@ def _processar_sessao(uid: int, sessao: dict, mensagem: str) -> str:
 
     if etapa == "aguardando_confirmacao_conta_paga":
         return _processar_confirmacao_conta_paga(uid, sessao, mensagem)
+
+    if etapa == "aguardando_confirmacao_todas_pagas":
+        return _processar_confirmacao_todas_pagas(uid, sessao, mensagem)
 
     return "❓ Sessão inválida. Envie um novo valor para começar."
 
