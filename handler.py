@@ -22,6 +22,7 @@ from db import (
     excluir_ultimo_gasto,
     get_ultimo_gasto,
     get_ultimo_gasto_por_categoria,
+    get_soma_gastos_categoria_periodo,
     excluir_gasto_por_id,
     editar_ultimo_gasto_valor,
     get_grupo,
@@ -731,6 +732,8 @@ def _processar_resultado_classificacao(uid: int, resultado: dict) -> str | None:
     # vem de uma consulta determinística no banco, nunca inventada pela IA.
     # Sem sessão nenhuma: é leitura, não há nada pra confirmar ou desfazer.
     if intencao == "consulta_dados":
+        if resultado.get("tipo") == "soma":
+            return _responder_soma_categoria(uid, resultado["categoria"], resultado["dias"])
         return _responder_consulta_dados(uid, resultado["categoria"])
 
     # 29/08/2026 — "quais são as contas do mês?": mesma resposta do comando
@@ -804,6 +807,26 @@ def _responder_consulta_dados(uid: int, categoria: dict) -> str:
     return (
         f"🗓 Último gasto em *{categoria['nome']}*: {data_str} — {val}\n"
         "_(*gastos* mostra os últimos 5 de todas as categorias)_"
+    )
+
+
+def _responder_soma_categoria(uid: int, categoria: dict, dias: int) -> str:
+    """
+    Resolve intencao='consulta_dados' com tipo='soma' (29/08/2026, "quanto
+    gastei de combustível nos últimos 30 dias?"). A IA só identificou
+    categoria e período — a soma em si vem de
+    db.get_soma_gastos_categoria_periodo, nunca calculada/inventada pela IA.
+    """
+    resultado = get_soma_gastos_categoria_periodo(uid, categoria["id"], dias)
+    total = resultado["total"]
+    qtd   = resultado["quantidade"]
+
+    if qtd == 0:
+        return f"📭 Nenhum gasto em *{categoria['nome']}* nos últimos {dias} dias."
+
+    return (
+        f"💸 *{categoria['nome']}* nos últimos {dias} dias: {_brl(total)} "
+        f"({qtd} lançamento{'s' if qtd != 1 else ''})"
     )
 
 

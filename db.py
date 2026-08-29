@@ -329,6 +329,34 @@ def get_ultimo_gasto_por_categoria(usuario_id: int, categoria_id: int):
             return dict(row) if row else None
 
 
+def get_soma_gastos_categoria_periodo(usuario_id: int, categoria_id: int, dias: int) -> dict:
+    """
+    Soma de gastos numa categoria nos últimos `dias` dias (incluindo hoje) —
+    29/08/2026, pedido do Lucas: "quanto gastei de combustível nos últimos
+    30 dias?". Antes disso só existia `get_ultimo_gasto_por_categoria`
+    (data do último gasto); essa pergunta de SOMA POR PERÍODO era
+    explicitamente fora do escopo (ver ai.py::_montar_prompt_fallback) e
+    caía errada em cima daquela função — respondia a data do último gasto
+    pra uma pergunta de soma, que é outra coisa.
+
+    Filtra por `g.data`, não `g.competencia`: "últimos 30 dias" é uma janela
+    de calendário (quando a compra aconteceu), não de fatura — mesma lógica
+    de escopo de `get_ultimo_gasto_por_categoria` (só `usuario_id`, sem
+    `grupo_id`, cada membro vê o próprio histórico).
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT COALESCE(SUM(g.valor), 0) AS total, COUNT(*) AS quantidade
+                   FROM gastos g
+                   WHERE g.usuario_id = %s AND g.categoria_id = %s
+                     AND g.data >= CURRENT_DATE - (%s || ' days')::interval""",
+                (usuario_id, categoria_id, dias),
+            )
+            row = cur.fetchone()
+            return {"total": float(row["total"]), "quantidade": int(row["quantidade"])}
+
+
 def excluir_ultimo_gasto(usuario_id: int):
     with get_conn() as conn:
         with conn.cursor() as cur:

@@ -141,14 +141,22 @@ def interpretar_mensagem(texto: str, categorias: list[dict], formas: list[dict])
                         'descricao_acao': str} — handler.py pede confirmação
                        ("sim") antes de rotear pro comando de verdade; nunca
                        executa direto (ação pode alterar grupo/membros/etc.).
-    - 'consulta_dados' -> {'intencao': 'consulta_dados', 'categoria': dict}
-                       — pergunta sobre o histórico do usuário numa categoria
-                       (29/08/2026, "qual foi o último dia que abasteci o
-                       carro?"). handler.py busca o dado real no banco
-                       (db.get_ultimo_gasto_por_categoria) e monta a
-                       resposta — a IA aqui só identifica QUAL categoria,
-                       nunca inventa a resposta. Se a categoria sugerida não
-                       bater em nenhuma categoria real do usuário, cai em
+    - 'consulta_dados' -> pergunta sobre o histórico do usuário numa
+                       categoria. Dois formatos, por 'tipo':
+                       {'intencao': 'consulta_dados', 'tipo': 'ultimo',
+                        'categoria': dict} — "qual foi o último dia que
+                       abasteci o carro?" (handler.py usa
+                       db.get_ultimo_gasto_por_categoria).
+                       {'intencao': 'consulta_dados', 'tipo': 'soma',
+                        'categoria': dict, 'dias': int} — "quanto gastei de
+                       combustível nos últimos 30 dias?" (29/08/2026 —
+                       antes disso essa pergunta caía errada em cima do
+                       'ultimo', respondendo a data do último gasto pra uma
+                       pergunta de soma; handler.py usa
+                       db.get_soma_gastos_categoria_periodo). A IA só
+                       identifica categoria/tipo/dias, nunca soma nem
+                       inventa a resposta. Se a categoria sugerida não bater
+                       em nenhuma categoria real do usuário, cai em
                        'indefinido' (mesma lógica anti-alucinação do
                        'comando').
     - 'consulta_contas' -> {'intencao': 'consulta_contas'} — "quais são as
@@ -245,7 +253,22 @@ def interpretar_mensagem(texto: str, categorias: list[dict], formas: list[dict])
                 f"usuário, descartada: {resultado.get('categoria_sugerida')!r}"
             )
             return {"intencao": "indefinido"}
-        return {"intencao": "consulta_dados", "categoria": categoria}
+
+        # 'tipo_consulta' (29/08/2026, "quanto gastei de combustível nos
+        # últimos 30 dias?") — extraído pela IA, não um intent novo (mesmo
+        # princípio de marcar_contas_pagas: um campo a mais em vez de um
+        # enum crescendo). 'ultimo' é o default pra não quebrar quem já
+        # dependia do formato de antes desta mudança.
+        tipo = resultado.get("tipo_consulta") or "ultimo"
+        if tipo == "soma":
+            try:
+                dias = int(resultado.get("dias") or 30)
+            except (TypeError, ValueError):
+                dias = 30
+            dias = max(1, min(dias, 365))  # trava contra a IA sugerir algo absurdo
+            return {"intencao": "consulta_dados", "tipo": "soma", "categoria": categoria, "dias": dias}
+
+        return {"intencao": "consulta_dados", "tipo": "ultimo", "categoria": categoria}
 
     if intencao == "consulta_contas":
         return {"intencao": "consulta_contas"}
