@@ -1,3 +1,4 @@
+import calendar
 import re
 from datetime import date as _date, datetime
 from db import (get_saldo_todas_formas, get_resumo_mes, atualizar_limite,
@@ -121,6 +122,66 @@ def cmd_saldo(usuario_id: int, mensagem: str) -> str:
                 linhas.append(
                     f"🧾 Fatura anterior a pagar em {mes_venc}: {_brl(status['fatura_anterior'])}"
                 )
+
+    # Bloco final (pedido do Lucas, 29/08/2026). Só aparece sem filtro: com
+    # "/saldo Nubank" a pessoa quer olhar aquele cartão, um total de TODAS
+    # as formas ali embaixo confundiria mais do que ajudaria.
+    #
+    # Duas bases diferentes de propósito, cada uma seguindo a definição que
+    # o Lucas deu: "Total Gasto" usa a Projeção Fatura (fatura_atual_estimada
+    # — já inclui fixa que ainda não venceu), enquanto "Saldo Restante" soma
+    # a mesma "Saldo Disponível" que já aparece linha a linha acima (baseada
+    # no gasto REAL/fatura_atual, não na projeção). Ou seja: o "Total Gasto"
+    # é otimista (conta o que ainda vai entrar), o "Saldo Restante" é
+    # conservador (só desconta o que já é fatura fechada). É assim que os
+    # dois nomes já eram usados nas linhas por forma; manter a mesma base
+    # aqui evita um "Saldo Restante" que não bate com a soma das linhas de
+    # cima se alguém for conferir na mão.
+    if not filtro:
+        total_gasto = 0.0
+        saldo_restante = 0.0
+        orcamento_mensal = 0.0
+        for f in get_saldo_todas_formas(usuario_id):
+            if f["id"] in cartoes_ids:
+                status_f = status_cartao(usuario_id, f["id"])
+                if not status_f:
+                    continue
+                gasto_estimado_f = status_f["fatura_atual_estimada"]
+                gasto_real_f = status_f["fatura_atual"]
+                limite_f = status_f["limite_mensal"]
+            else:
+                gasto_estimado_f = gasto_real_f = float(f["gasto_mes"])
+                limite_f = float(f["limite_mensal"]) if f["limite_mensal"] else None
+
+            total_gasto += gasto_estimado_f
+            if limite_f:
+                saldo_restante += (limite_f - gasto_real_f)
+                orcamento_mensal += limite_f
+
+        linhas.append("")
+        linhas.append("━━━━━━━━━━━━━━")
+        linhas.append(f"💸 Total Gasto: {_brl(total_gasto)}")
+        linhas.append(f"💰 Saldo Restante: {_brl(saldo_restante)}")
+
+        # "Orçamento mensal" = soma dos limites cadastrados (não existe um
+        # campo de orçamento separado no modelo hoje). Sem nenhuma forma com
+        # limite não dá pra calcular ritmo esperado, então a linha some em
+        # vez de mostrar um "Status" sem sentido.
+        if orcamento_mensal > 0:
+            hoje = _date.today()
+            dias_no_mes = calendar.monthrange(hoje.year, hoje.month)[1]
+            gasto_esperado_ate_hoje = (orcamento_mensal / dias_no_mes) * hoje.day
+
+            # Faixa de 5% de folga em vez de comparação estrita: ritmo bate
+            # "no risco" o dia inteiro por causa de arredondamento/hora do
+            # dia — sem a folga, "na média" praticamente nunca apareceria.
+            if total_gasto > gasto_esperado_ate_hoje * 1.05:
+                status_txt = "🔴 Gastos acima da média"
+            elif total_gasto < gasto_esperado_ate_hoje * 0.95:
+                status_txt = "🟢 Gastos abaixo da média"
+            else:
+                status_txt = "🟡 Gastos na média"
+            linhas.append(f"📅 Status: {status_txt}")
 
     return "\n".join(linhas)
 

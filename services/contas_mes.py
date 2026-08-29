@@ -52,6 +52,7 @@ from datetime import date
 
 from db import get_conn, _get_grupo_id, get_formas_pagamento
 from services.competencia import mes_vencimento, somar_meses
+from services.faturas import _get_ajuste
 from services.gastos import projetar_despesas_fixas
 from utils.app_error import AppError
 
@@ -199,6 +200,14 @@ def _linhas_faturas(conn, gid, usuario_id, mes_alvo: date, formas: list,
     `projecoes_por_mes` traz as fixas em cartão que o lançador ainda não
     materializou naquela competência — sem somá-las, a fatura de um mês
     futuro apareceria menor do que vai ser de verdade.
+
+    Também soma o ajuste manual da fatura (`ajustes_fatura`, migração 028 —
+    juros/IOF/arredondamento do banco que não vira um gasto lançado). Até
+    29/08/2026 esta função ignorava a tabela: o board mostrava o valor bruto
+    enquanto o /saldo do bot e o modal "Ver fatura" (services/faturas.py::
+    status_cartao, que já aplica `_get_ajuste`) mostravam o valor ajustado —
+    os três precisam bater, então reusa a mesma função em vez de duplicar a
+    lógica de soma.
     """
     escopo, params_escopo = _filtro_escopo(gid, usuario_id)
     linhas = []
@@ -227,6 +236,8 @@ def _linhas_faturas(conn, gid, usuario_id, mes_alvo: date, formas: list,
                 )
                 pagamento = cur.fetchone()
 
+                ajuste, motivo_ajuste = _get_ajuste(cur, forma["id"], competencia)
+
             total = float(agregado["total"])
             itens = int(agregado["itens"])
 
@@ -237,7 +248,10 @@ def _linhas_faturas(conn, gid, usuario_id, mes_alvo: date, formas: list,
             total_previsto = sum(float(p["valor"]) for p in previstas)
 
             # Fatura zerada e sem previsão nenhuma não vira linha — cartão
-            # que não foi usado naquele mês não é uma conta a pagar.
+            # que não foi usado naquele mês não é uma conta a pagar. O ajuste
+            # entra fora dessa checagem de propósito: fatura zerada não tem
+            # ajuste manual salvo na prática (o form só existe depois que a
+            # fatura já tem gasto), então isolar esse caso não muda o board.
             if total + total_previsto <= 0:
                 continue
 
@@ -246,7 +260,9 @@ def _linhas_faturas(conn, gid, usuario_id, mes_alvo: date, formas: list,
                 "tipo": "fatura",
                 "descricao": f"Fatura {forma['nome']}",
                 "detalhe": _detalhe_fatura(itens, len(previstas)),
-                "valor": total + total_previsto,
+                "valor": total + total_previsto + ajuste,
+                "ajuste_fatura": ajuste,
+                "ajuste_motivo": motivo_ajuste,
                 "valor_pago": float(pagamento["valor_pago"])
                     if pagamento and pagamento["valor_pago"] is not None else None,
                 "pago": pagamento is not None,
