@@ -46,6 +46,22 @@ _VALOR_RE = re.compile(r"R?\$?\s*(\d+(?:[.,]\d+)*)", re.IGNORECASE)
 # valor grande sem pontuação (R$ 1.234.567) sem abrir brecha pra 10+ dígitos.
 _MAX_DIGITOS_VALOR_SEM_SEPARADOR = 7
 
+# Mesma família do bug do telefone acima (24/07/2026): um número seguido de
+# unidade de TEMPO não é valor em reais — "nos últimos 30 dias" não é R$30.
+# Bug real (29/08/2026, print do Lucas): "quanto gastei de combustível nos
+# últimos 30 dias?" virou tentativa de registrar um gasto de R$30,00 (o
+# caminho determinístico de gasto tem prioridade sobre a IA sempre que acha
+# um valor — sem esta guarda, a pergunta nunca chegava a ser classificada
+# como pergunta/consulta_dados, virava um menu de "qual a forma de
+# pagamento?" perigoso: responder um número ali registraria o gasto
+# fantasma). Olha só a PRÓXIMA palavra depois do número — "30 dias" descarta
+# esse match e o finditer segue pro próximo número real da frase, se houver.
+_UNIDADES_TEMPO = {
+    "dia", "dias", "mes", "meses", "mês",
+    "semana", "semanas", "ano", "anos",
+    "hora", "horas", "minuto", "minutos",
+}
+
 # Palavras numéricas → valor
 _UNIDADES = {
     "um": 1, "uma": 1, "dois": 2, "duas": 2,
@@ -167,6 +183,12 @@ def extrair_valor(texto: str) -> float | None:
         )
         if bare_longo_demais:
             continue
+
+        resto = texto[m.end():].strip().lower()
+        proxima_palavra = resto.split(None, 1)[0].strip(".,!?") if resto else ""
+        if proxima_palavra in _UNIDADES_TEMPO:
+            continue
+
         return _normalizar_numero_br(bruto)
 
     # 2) Palavras numéricas em português
