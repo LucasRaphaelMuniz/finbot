@@ -52,8 +52,8 @@ import re
 import unicodedata
 from datetime import date
 
-from db import get_conn, _get_grupo_id, get_formas_pagamento
-from services.competencia import mes_vencimento, somar_meses
+from db import get_conn, _get_grupo_id, _get_dia_corte, get_formas_pagamento
+from services.competencia import calcular_competencia, dia_corte_como_fechamento, mes_vencimento, somar_meses
 from services.faturas import _get_ajuste
 from services.gastos import projetar_despesas_fixas
 from utils.app_error import AppError
@@ -122,10 +122,32 @@ def parsear_chave(chave: str) -> tuple:
     raise AppError(f"Identificador de conta inválido: {chave}", 400, "chave_invalida")
 
 
-def _mes_para_data(mes: str) -> date:
-    """"YYYY-MM" -> date(YYYY, MM, 1). Default: mês corrente."""
+def _mes_para_data(mes: str, usuario_id: int = None) -> date:
+    """
+    "YYYY-MM" -> date(YYYY, MM, 1). Default: mês corrente.
+
+    Corrigido em 29/08/2026 (print do Lucas: "paguei a fatura do cartão" no
+    bot não achava uma fatura que o próprio /saldo tinha acabado de mostrar
+    como pendente). Causa: o default aqui era mês CALENDÁRIO puro
+    (date.today()), enquanto comandos.py::cmd_saldo (via services/faturas.py
+    ::status_cartao) já usa o mês de COMPETÊNCIA, corte-aware — perto do fim
+    do mês, com o dia de corte já passado, os dois divergem (calendário
+    ainda em agosto, competência já em setembro).
+
+    `usuario_id` é opcional: routes/contas.py (o site) SEMPRE manda `mes`
+    explícito (?mes=YYYY-MM, ver MesPicker no front) — o default corte-aware
+    só importa pro bot, que chama listar_contas_mes/buscar_contas_abertas
+    sem informar mês nenhum. Sem usuario_id (chamada antiga/de teste sem
+    contexto de usuário) cai no calendário puro, mesmo comportamento de
+    antes.
+    """
     if not mes:
-        return date.today().replace(day=1)
+        if usuario_id is None:
+            return date.today().replace(day=1)
+        with get_conn() as conn:
+            dia_corte = _get_dia_corte(conn, usuario_id)
+        competencia = calcular_competencia(date.today(), dia_corte_como_fechamento(dia_corte))
+        return competencia.replace(day=1)
     try:
         ano, mes_num = (int(p) for p in mes.split("-")[:2])
         return date(ano, mes_num, 1)
@@ -355,7 +377,7 @@ def listar_contas_mes(usuario_id: int, mes: str = None) -> dict:
     `mes` é o mês do CAIXA (quando a conta é paga), não a competência do
     gasto — a fatura que fechou em 28/07 aparece no board de agosto.
     """
-    mes_alvo = _mes_para_data(mes)
+    mes_alvo = _mes_para_data(mes, usuario_id)
 
     # Buscado UMA vez e passado adiante: get_formas_pagamento abre conexão
     # própria, e ele é necessário em 3 pontos do fluxo abaixo.
@@ -480,13 +502,37 @@ def buscar_contas_abertas(usuario_id: int, texto: str, mes: str = None) -> list[
     Retorna [] se `texto` não tem nenhuma palavra significativa, ou se nada
     bateu. Retorna só os candidatos com a MAIOR pontuação (ignora os piores),
     então 1 resultado = sem ambiguidade, 2+ = ambiguidade real.
+
+    Sem `mes` explícito, busca em DOIS meses — o calendário atual e o
+    seguinte — em vez de só um (29/08/2026, print do Lucas: "paguei a
+    fatura do cartão" não achou uma fatura que o próprio /saldo tinha
+    acabado de mostrar como pendente). Causa: perto do fim do mês, o "mês
+    corrente" em CALENDÁRIO (o default de `listar_contas_mes`) e o "mês
+    corrente" em COMPETÊNCIA/corte (o que comandos.py::cmd_saldo usa,
+    via services/faturas.py::status_cartao) podem divergir — calendário
+    ainda em agosto, competência (e a fatura "a pagar" nela) já em
+    setembro. Buscar nos dois meses evita depender de replicar aqui a
+    regra de corte exata, que já existe duplicada em 2 lugares do código.
     """
     tokens_busca = _tokens_significativos(texto)
     if not tokens_busca:
         return []
 
+    if mes:
+        meses_busca = [mes]
+    else:
+        proximo = somar_meses(date.today().replace(day=1), 1)
+        meses_busca = [None, proximo.strftime("%Y-%m")]
+
+    a_pagar = []
+    chaves_vistas = set()
+    for m in meses_busca:
+        for conta in listar_contas_mes(usuario_id, m)["a_pagar"]:
+            if conta["chave"] not in chaves_vistas:
+                chaves_vistas.add(conta["chave"])
+                a_pagar.append(conta)
+
     menciona_fatura = bool(tokens_busca & _PALAVRAS_FATURA)
-    a_pagar = listar_contas_mes(usuario_id, mes)["a_pagar"]
 
     pontuados = []
     for conta in a_pagar:

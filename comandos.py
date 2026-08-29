@@ -68,12 +68,12 @@ def cmd_saldo(usuario_id: int, mensagem: str) -> str:
     linhas = [f"📊 *Saldo — {_mes_ano(usuario_id)}*"]
     for f in formas:
         emoji = _emoji_forma(f["nome"])
-        linhas.append("")
-        linhas.append(f"{emoji} *{f['nome']}*")
 
         if f["id"] in cartoes_ids:
             status = status_cartao(usuario_id, f["id"])
             if not status:
+                linhas.append("")
+                linhas.append(f"{emoji} *{f['nome']}*")
                 linhas.append("⚠️ Não foi possível calcular a fatura.")
                 continue
             gasto  = status["fatura_atual"]
@@ -84,15 +84,18 @@ def cmd_saldo(usuario_id: int, mensagem: str) -> str:
             limite = float(f["limite_mensal"]) if f["limite_mensal"] else None
 
         # Forma sem limite (ex.: Custos Fixos) não tem "saldo" de verdade
-        # pra comparar — pedido do Lucas em 25/08/2026: tirar a linha
-        # "Total: X gastos este mês" daqui; a composição desse total
-        # aparece detalhada por categoria no /resumo, não precisa duplicar
-        # aqui.
+        # pra comparar — pedido do Lucas: nem a linha "Total: X gastos este
+        # mês" (25/08/2026), nem o cabeçalho da forma inteira (29/08/2026,
+        # ficava um "💰 CUSTOS FIXOS" solto sem nada embaixo). A composição
+        # desse total aparece detalhada por categoria no /resumo, não
+        # precisa duplicar aqui.
+        linhas_forma = []
+
         if limite:
             sobra = limite - gasto
             pct   = (gasto / limite) * 100
-            linhas.append(f"*Saldo Disponível: {_brl(sobra)}*")
-            linhas.append(f"Total: {_brl(gasto)} / {_brl(limite)}")
+            linhas_forma.append(f"*Saldo Disponível: {_brl(sobra)}*")
+            linhas_forma.append(f"Total: {_brl(gasto)} / {_brl(limite)}")
 
             # Projeção Fatura (25/08/2026, pedido do Lucas): pra onde a
             # fatura atual deve fechar — real lançado (compras avulsas E
@@ -104,14 +107,14 @@ def cmd_saldo(usuario_id: int, mensagem: str) -> str:
             # a linha fixa logo depois do Total, antes dos alertas de
             # limite.
             if status:
-                linhas.append(
+                linhas_forma.append(
                     f"📈 Projeção Fatura: {_brl(status['fatura_atual_estimada'])}"
                 )
 
             if gasto > limite:
-                linhas.append("🚨 Limite ultrapassado!")
+                linhas_forma.append("🚨 Limite ultrapassado!")
             elif pct >= 80:
-                linhas.append(f"⚠️ {pct:.0f}% do limite usado")
+                linhas_forma.append(f"⚠️ {pct:.0f}% do limite usado")
 
         if status:
             # Fatura anterior: só mostra "a pagar" se ainda não foi marcada
@@ -120,9 +123,16 @@ def cmd_saldo(usuario_id: int, mensagem: str) -> str:
             # fatura que o Lucas já tinha pago.
             if status["fatura_anterior"] > 0 and not status["fatura_anterior_paga"]:
                 mes_venc = status["vencimento_fatura_anterior"][:7]
-                linhas.append(
+                linhas_forma.append(
                     f"🧾 Fatura anterior a pagar em {mes_venc}: {_brl(status['fatura_anterior'])}"
                 )
+
+        if not linhas_forma:
+            continue  # nada a mostrar pra essa forma — não abre cabeçalho à toa
+
+        linhas.append("")
+        linhas.append(f"{emoji} *{f['nome']}*")
+        linhas.extend(linhas_forma)
 
     # Bloco final (pedido do Lucas, 29/08/2026). Só aparece sem filtro: com
     # "/saldo Nubank" a pessoa quer olhar aquele cartão, um total de TODAS
@@ -138,6 +148,13 @@ def cmd_saldo(usuario_id: int, mensagem: str) -> str:
     # dois nomes já eram usados nas linhas por forma; manter a mesma base
     # aqui evita um "Saldo Restante" que não bate com a soma das linhas de
     # cima se alguém for conferir na mão.
+    #
+    # As DUAS só somam formas COM limite (29/08/2026, correção do Lucas: o
+    # Total Gasto bateu R$11.764,77 porque somava também o gasto_mes de
+    # "Custos Fixos" — forma sem limite, que nem aparece na mensagem acima
+    # pra conferir de onde veio aquele número). Mesmo critério que já valia
+    # pra Saldo Restante desde o início: forma sem limite não entra na
+    # conta, porque não tem "saldo" nenhum contra o qual comparar.
     if not filtro:
         total_gasto = 0.0
         saldo_restante = 0.0
@@ -154,8 +171,8 @@ def cmd_saldo(usuario_id: int, mensagem: str) -> str:
                 gasto_estimado_f = gasto_real_f = float(f["gasto_mes"])
                 limite_f = float(f["limite_mensal"]) if f["limite_mensal"] else None
 
-            total_gasto += gasto_estimado_f
             if limite_f:
+                total_gasto += gasto_estimado_f
                 saldo_restante += (limite_f - gasto_real_f)
                 orcamento_mensal += limite_f
 
