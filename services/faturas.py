@@ -42,6 +42,27 @@ dashboard já usa em `fixas_previstas`, só filtrada pra 1 forma). Compra
 parcelada NÃO entra na estimativa por separado: as parcelas futuras já são
 gastos reais com competência própria desde a criação da compra
 (services/parcelamento.py) — só ainda não chegou a vez delas.
+
+DESPESA FIXA ANTECIPADA vs. "REAL" (29/08/2026, pedido do Lucas) — o passe 2
+de `despesas_fixas.py::lancar_despesas_fixas_do_mes` cria o gasto do MÊS
+SEGUINTE com antecedência (dia 18/07/2026: "quero igual compra parcelada",
+pra virar linha editável em vez de "previsto" sintético). Isso resolveu o
+problema de EDIÇÃO, mas criou um novo: a linha passa a existir em `gastos`
+com `data` no futuro (ainda não chegou o dia de cobrança), e a soma bruta
+por competência abaixo não distinguia "já é dia de cobrar" de "só existe
+adiantado" — o valor entrava direto na fatura ATUAL (real), inflando ela
+antes da hora, e nunca aparecia na estimativa (`projetar_despesas_fixas`
+não projeta o que já tem gasto real, então o item ficava invisível ali).
+
+Fix: pra despesa fixa (`despesa_fixa_id IS NOT NULL`), só conta como fatura
+ATUAL quando `data <= hoje` — chegou o dia de cobrança de verdade. Uma
+compra avulsa ou parcela (`despesa_fixa_id IS NULL`) continua contando
+inteira pela competência, sem esse filtro — isso NÃO muda (parcela futura
+já é "certeza que vou pagar" desde a criação, é exatamente o modelo que a
+antecipação de despesa fixa tentou copiar). A fatura ESTIMADA volta a
+enxergar a despesa fixa antecipada mas ainda não vencida — soma TUDO da
+competência (sem o filtro de data), então ela nunca fica "invisível": some
+da fatura atual e reaparece na estimada até o dia de cobrança chegar.
 """
 
 from datetime import date
@@ -115,13 +136,23 @@ def status_cartao(usuario_id: int, forma_id: int) -> dict | None:
                 """SELECT
                        COALESCE(SUM(valor) FILTER (
                            WHERE DATE_TRUNC('month', competencia) = %s
+                             AND (despesa_fixa_id IS NULL OR data <= %s)
                        ), 0) AS fatura_atual,
                        COALESCE(SUM(valor) FILTER (
                            WHERE DATE_TRUNC('month', competencia) = %s
-                       ), 0) AS fatura_anterior
+                       ), 0) AS fatura_atual_sem_filtro_data,
+                       COALESCE(SUM(valor) FILTER (
+                           WHERE DATE_TRUNC('month', competencia) = %s
+                             AND (despesa_fixa_id IS NULL OR data <= %s)
+                       ), 0) AS fatura_anterior,
+                       COUNT(*) FILTER (
+                           WHERE DATE_TRUNC('month', competencia) = %s
+                             AND despesa_fixa_id IS NOT NULL
+                             AND data > %s
+                       ) AS fixas_antecipadas_pendentes_qtd
                    FROM gastos
                    WHERE forma_pagamento_id = %s""",
-                (comp_atual, comp_anterior, forma_id),
+                (comp_atual, hoje, comp_atual, comp_anterior, hoje, comp_atual, hoje, forma_id),
             )
             row = dict(cur.fetchone())
 
@@ -149,14 +180,27 @@ def status_cartao(usuario_id: int, forma_id: int) -> dict | None:
         ]
 
     limite_mensal = float(forma["limite_mensal"]) if forma["limite_mensal"] else None
-    fatura_atual_bruta = float(row["fatura_atual"])
+    fatura_atual_bruta = float(row["fatura_atual"])  # já com "chegou o dia" aplicado
+    fatura_atual_bruta_sem_filtro = float(row["fatura_atual_sem_filtro_data"])
     fatura_anterior_bruta = float(row["fatura_anterior"])
     fatura_atual = fatura_atual_bruta + ajuste_atual
     fatura_anterior = fatura_anterior_bruta + ajuste_anterior
     total_previsto = sum(float(p["valor"]) for p in previstas_cartao)
-    fatura_atual_estimada = fatura_atual + total_previsto
+    # Estimada = TUDO da competência (inclui despesa fixa antecipada que
+    # ainda não chegou o dia de cobrar — por isso NÃO usa `fatura_atual`,
+    # que já filtrou essas) + o que nem foi lançado ainda (total_previsto).
+    fatura_atual_estimada = fatura_atual_bruta_sem_filtro + ajuste_atual + total_previsto
     venc_anterior = mes_vencimento(comp_anterior, forma.get("dia_fechamento"),
                                     forma.get("dia_vencimento"))
+
+    # "Pendente" pro texto da tela (formas/page.jsx) cobre os DOIS jeitos de
+    # uma despesa fixa ainda não pesar na fatura atual: nunca foi lançada
+    # (previstas_cartao, projeção pura) OU já foi lançada antecipadamente
+    # (passe 2 de despesas_fixas.py) mas o dia de cobrança ainda não chegou
+    # (fixas_antecipadas_pendentes_qtd, linha real em `gastos`, só não conta
+    # em fatura_atual ainda). Sem somar os dois, a 2ª categoria ficaria
+    # invisível de novo — exatamente o bug original.
+    fixas_pendentes_qtd = len(previstas_cartao) + int(row["fixas_antecipadas_pendentes_qtd"])
 
     return {
         "forma_id": forma_id,
@@ -165,7 +209,7 @@ def status_cartao(usuario_id: int, forma_id: int) -> dict | None:
         "fatura_atual": fatura_atual,
         "fatura_atual_bruta": fatura_atual_bruta,
         "fatura_atual_estimada": fatura_atual_estimada,
-        "fixas_previstas_qtd": len(previstas_cartao),
+        "fixas_previstas_qtd": fixas_pendentes_qtd,
         "ajuste_fatura_atual": ajuste_atual,
         "ajuste_motivo_atual": motivo_atual,
         "limite_disponivel": (limite_mensal - fatura_atual) if limite_mensal is not None else None,

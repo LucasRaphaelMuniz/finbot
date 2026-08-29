@@ -37,7 +37,7 @@ export const Field = styled.div`
     color: ${({ theme }) => theme.colors.textMuted};
   }
 
-  input {
+  input, select {
     background: ${({ theme }) => theme.colors.surfaceAlt};
     border: 1px solid ${({ theme }) => theme.colors.border};
     border-radius: ${({ theme }) => theme.radius.sm};

@@ -115,7 +115,7 @@ function StatusCartao({ forma, onErro, onAjustado }) {
         valor={status.fatura_atual_estimada}
         detalhe={
           status.fixas_previstas_qtd > 0
-            ? `inclui ${status.fixas_previstas_qtd} despesa(s) fixa(s) ainda não lançada(s) este mês`
+            ? `inclui ${status.fixas_previstas_qtd} despesa(s) fixa(s) ainda não cobrada(s) este mês`
             : "sem despesa fixa pendente este mês — igual à real"
         }
       />
