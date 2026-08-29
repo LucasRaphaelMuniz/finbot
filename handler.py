@@ -21,6 +21,7 @@ from db import (
     remover_forma_pagamento,
     excluir_ultimo_gasto,
     get_ultimo_gasto,
+    get_ultimo_gasto_por_categoria,
     excluir_gasto_por_id,
     editar_ultimo_gasto_valor,
     get_grupo,
@@ -75,6 +76,7 @@ from parser import (
     eh_entrada,
     parece_comando_natural,
     parece_correcao,
+    parece_ruido,
     limpar_descricao,
     extrair_data,
 )
@@ -183,6 +185,18 @@ def _despachar_comando(uid: int, mensagem: str) -> str | None:
         return cmd_limite(uid, lower)
     if lower == "gastos":
         return cmd_gastos(uid)
+    # "desfazer" (29/08/2026, print do Lucas): sinônimo determinístico de
+    # "excluir ultimo". Sem isso, "desfazer" não bate em nenhum prefixo
+    # aqui, extrair_valor devolve None, e a mensagem cai inteira no
+    # fallback de IA (_tentar_fallback_ia) — que precisaria classificar
+    # "Desfazer" sozinho, sem nenhum contexto do que fazer, como intenção
+    # 'comando' com comando_sugerido='excluir ultimo'. Na prática a IA não
+    # reconheceu (respondeu "Não entendi essa" no print) — plausível: a
+    # palavra sozinha não aparece na REFERÊNCIA DE COMANDOS (cmd_ajuda),
+    # que só lista "excluir ultimo". Um alias direto aqui é o caminho
+    # barato e confiável — sem depender de a IA "adivinhar" o sinônimo.
+    if lower in ("desfazer", "desfaz", "desfazer ultimo", "desfazer o ultimo"):
+        return _cmd_excluir(uid, "excluir ultimo")
     if lower.startswith("excluir"):
         return _cmd_excluir(uid, lower)
     if lower.startswith("editar ultimo"):
@@ -226,7 +240,7 @@ def _despachar_comando(uid: int, mensagem: str) -> str | None:
 _PREFIXOS_NOVA_INTENCAO = (
     "saldo", "resumo", "gastos", "ajuda", "excluir", "editar ultimo",
     "forma ", "categoria ", "fixa ", "entrada ", "apelido ",
-    "vincular ", "grupo", "limite ",
+    "vincular ", "grupo", "limite ", "desfazer", "desfaz",
 )
 
 
@@ -242,19 +256,25 @@ def _parece_nova_intencao(mensagem: str) -> bool:
 def _fora_do_esperado(uid: int, mensagem: str) -> str:
     """
     Chamado quando a resposta não serve pra pergunta em aberto.
-    Devolve "" pra ficar em silêncio — app.py só envia se a resposta for
-    não-vazia. A sessão fica VIVA de propósito: a pessoa ainda pode
-    responder certo depois, e o timeout de 5 min encerra sozinho se ela
-    tiver desistido.
 
-    Duas exceções ao silêncio, ambas de mensagens que claramente QUEREM
-    alguma coisa (diferente de "kkkk", que não quer nada):
-    - intenção nova (comando conhecido / frase com estrutura de ordem);
-    - correção ("falei errado, foi 60") — aqui a frase costuma carregar o
-      dado novo, então reprocessar resolve. A confirmação de COMANDO trata
-      correção antes de chegar aqui, com a IA vendo o comando pendente
-      junto (lá a frase sozinha não basta: "o nome correto é X" só
-      significa algo colado no `forma add ...` em aberto).
+    29/08/2026 (pedido do Lucas, revendo a decisão de 24/07 abaixo): NUNCA
+    mais devolve "" de verdade, exceto pro único caso em que vale a pena
+    economizar 1 chamada de LLM — ruído óbvio (`parser.parece_ruido`: "kkkk",
+    emoji solto, "ok" sem mais nada). Qualquer outra coisa passa pela IA
+    (mesmo classificador de `_tentar_fallback_ia`) e SEMPRE volta com uma
+    resposta: se a IA reconhecer uma intenção de verdade, processa; se não
+    reconhecer nada (indefinido), devolve um lembrete em vez de silêncio.
+
+    Histórico da decisão original (24/07/2026, mantido por contexto): "se a
+    próxima mensagem for diferente do solicitado... o bot deve apenas
+    ignorar... quando solicitar sim ou não, se a pessoa responder outra
+    coisa, o bot simplesmente ignora". Isso cobria bem "kkkk", mas tinha um
+    buraco maior do que o buraco original (COMANDO NOVO com sessão aberta,
+    corrigido então com `_parece_nova_intencao`): qualquer mensagem com
+    conteúdo real que não fosse um prefixo conhecido nem tivesse estrutura
+    de ordem (ex: uma pergunta como "qual foi meu último abastecimento?")
+    também caía no silêncio — o mesmo problema, só que mais raro. Chamar a
+    IA em vez de aplicar um silêncio genérico resolve os dois de uma vez.
     """
     if _parece_nova_intencao(mensagem) or parece_correcao(mensagem):
         deletar_sessao(uid)
@@ -262,7 +282,29 @@ def _fora_do_esperado(uid: int, mensagem: str) -> str:
         if resultado is not None:
             return resultado
         return _processar_input_livre(uid, mensagem)
-    return ""
+
+    if parece_ruido(mensagem):
+        return ""
+
+    categorias = get_categorias(uid)
+    formas     = get_formas_pagamento(uid)
+    resultado  = interpretar_mensagem(mensagem, categorias, formas)
+    resposta   = _processar_resultado_classificacao(uid, resultado)
+
+    if resposta is not None:
+        # IA achou uma intenção de verdade — abandona a pergunta pendente,
+        # mesmo raciocínio de `_parece_nova_intencao` acima.
+        deletar_sessao(uid)
+        return resposta
+
+    # Indefinido de verdade (nem ruído, nem intenção reconhecível): nunca
+    # muda, mas também não inventa dado — só lembra que há algo pendente. A
+    # sessão continua viva (timeout de 5 min de `sessoes` é quem encerra).
+    return (
+        "🤔 Não entendi.\n\n"
+        "Ainda estou esperando sua resposta pra continuar — ou mande "
+        "*cancelar* pra encerrar."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -642,19 +684,20 @@ def _tentar_comando_natural(uid: int, mensagem: str) -> str | None:
     return None
 
 
-def _tentar_fallback_ia(uid: int, mensagem: str) -> str:
+def _processar_resultado_classificacao(uid: int, resultado: dict) -> str | None:
     """
-    services/ai_fallback.py já resolve os casos baratos ("ajuda"/"cancelar")
-    sem chamar IA; só gasta 1 requisição de LLM quando vale a pena. Se a IA
-    deduzir um gasto, NÃO insere direto — cria sessão de confirmação
-    (D3-like: mesma lógica de "perguntar antes" já usada em exclusão de
-    parcela), com o timeout de 5 min nativo de `sessoes` garantindo o
-    cancelamento seguro se o usuário não responder.
-    """
-    categorias = get_categorias(uid)
-    formas     = get_formas_pagamento(uid)
-    resultado  = interpretar_mensagem(mensagem, categorias, formas)
+    Despacha o dict que `services/ai_fallback.py::interpretar_mensagem`
+    devolve pra ação correspondente. Extraído em 29/08/2026 pra ser
+    compartilhado entre `_tentar_fallback_ia` (mensagem sem sessão) e
+    `_fora_do_esperado` (mensagem com sessão pendente que não bateu em
+    nenhum atalho barato) — sem isso, tratar "nunca ficar sem resposta" em
+    `_fora_do_esperado` exigiria uma 2ª chamada de LLM pro mesmo texto só
+    pra rotear de novo.
 
+    Devolve None só pra intencao='indefinido' — sinal pra quem chama decidir
+    o texto final (mensagem de exemplos em `_tentar_fallback_ia`, lembrete
+    de pendência em `_fora_do_esperado`).
+    """
     intencao = resultado.get("intencao")
 
     if intencao == "ajuda":
@@ -678,6 +721,35 @@ def _tentar_fallback_ia(uid: int, mensagem: str) -> str:
     if intencao == "comando":
         return _propor_confirmacao_comando(uid, resultado)
 
+    # 29/08/2026 — pergunta sobre o PRÓPRIO histórico ("qual foi o último
+    # dia que abasteci o carro?"), diferente de 'pergunta' (que é sobre como
+    # usar o bot). A IA só identificou a categoria (services/ai_fallback.py
+    # já validou contra as categorias reais do usuário) — a resposta em si
+    # vem de uma consulta determinística no banco, nunca inventada pela IA.
+    # Sem sessão nenhuma: é leitura, não há nada pra confirmar ou desfazer.
+    if intencao == "consulta_dados":
+        return _responder_consulta_dados(uid, resultado["categoria"])
+
+    return None
+
+
+def _tentar_fallback_ia(uid: int, mensagem: str) -> str:
+    """
+    services/ai_fallback.py já resolve os casos baratos ("ajuda"/"cancelar")
+    sem chamar IA; só gasta 1 requisição de LLM quando vale a pena. Se a IA
+    deduzir um gasto, NÃO insere direto — cria sessão de confirmação
+    (D3-like: mesma lógica de "perguntar antes" já usada em exclusão de
+    parcela), com o timeout de 5 min nativo de `sessoes` garantindo o
+    cancelamento seguro se o usuário não responder.
+    """
+    categorias = get_categorias(uid)
+    formas     = get_formas_pagamento(uid)
+    resultado  = interpretar_mensagem(mensagem, categorias, formas)
+
+    resposta = _processar_resultado_classificacao(uid, resultado)
+    if resposta is not None:
+        return resposta
+
     # Último recurso. Mostra exemplos CONCRETOS em vez de só nomear os
     # comandos (24/07/2026): quem cai aqui já demonstrou que não sabe a
     # sintaxe esperada — repetir "use *saldo*, *resumo*" não ensina o
@@ -690,6 +762,26 @@ def _tentar_fallback_ia(uid: int, mensagem: str) -> str:
         "📊 *Pra consultar:* *saldo* · *resumo* · *gastos*\n"
         "ℹ️ *ajuda* — lista tudo que dá pra fazer\n\n"
         "_Ou me pergunte direto, tipo: \"como adiciono alguém no grupo?\"_"
+    )
+
+
+def _responder_consulta_dados(uid: int, categoria: dict) -> str:
+    """
+    Resolve intencao='consulta_dados' (ver _tentar_fallback_ia): busca o
+    gasto mais recente do usuário na categoria que a IA identificou e monta
+    a resposta com o dado real do banco — a IA nunca inventa data nem valor
+    aqui, só apontou QUAL categoria consultar.
+    """
+    gasto = get_ultimo_gasto_por_categoria(uid, categoria["id"])
+    if not gasto:
+        return f"📭 Nenhum gasto registrado em *{categoria['nome']}* ainda."
+
+    val  = _brl(float(gasto["valor"]))
+    data = gasto["data"]
+    data_str = data.strftime("%d/%m/%Y") if hasattr(data, "strftime") else str(data)[:10]
+    return (
+        f"🗓 Último gasto em *{categoria['nome']}*: {data_str} — {val}\n"
+        "_(*gastos* mostra os últimos 5 de todas as categorias)_"
     )
 
 

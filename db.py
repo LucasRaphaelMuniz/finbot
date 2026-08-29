@@ -300,6 +300,35 @@ def get_ultimos_gastos(usuario_id: int, limit: int = 5):
             return [dict(r) for r in cur.fetchall()]
 
 
+def get_ultimo_gasto_por_categoria(usuario_id: int, categoria_id: int):
+    """
+    Peek do gasto mais recente numa categoria específica — 29/08/2026, pedido
+    do Lucas: responder perguntas tipo "qual foi o último dia que abasteci o
+    carro?" (categoria Combustível) com o dado real, não um "não entendi".
+
+    Mesmo escopo de `get_ultimos_gastos`: filtra só por `usuario_id`, não por
+    `grupo_id` — cada membro do grupo vê o PRÓPRIO histórico nessa consulta,
+    igual ao comando *gastos* já faz. Não é uma omissão nova, é manter a
+    mesma decisão de escopo já tomada ali.
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT g.id, g.valor, g.data,
+                          c.nome  AS categoria_nome,
+                          fp.nome AS forma_nome
+                   FROM gastos g
+                   LEFT JOIN categorias c        ON c.id  = g.categoria_id
+                   LEFT JOIN formas_pagamento fp ON fp.id = g.forma_pagamento_id
+                   WHERE g.usuario_id = %s AND g.categoria_id = %s
+                   ORDER BY g.data DESC, g.id DESC
+                   LIMIT 1""",
+                (usuario_id, categoria_id),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+
 def excluir_ultimo_gasto(usuario_id: int):
     with get_conn() as conn:
         with conn.cursor() as cur:

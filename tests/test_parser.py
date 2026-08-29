@@ -10,7 +10,7 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from parser import extrair_valor
+from parser import extrair_valor, extrair_forma_pagamento
 
 
 def test_valor_com_milhar_e_decimal():
@@ -109,3 +109,38 @@ def test_valor_com_separador_grande_continua_aceito_mesmo_longo():
     # Com vírgula/ponto de verdade (intenção monetária clara), não aplica o
     # limite de dígitos — só a heurística D1 de decimal vs. milhar.
     assert extrair_valor("12.345.678,90") == 12345678.90
+
+
+# ---------------------------------------------------------------------------
+# 29/08/2026 — extrair_forma_pagamento: vence quem aparece PRIMEIRO NO TEXTO,
+# não quem aparece primeiro na lista `formas` (que get_formas_pagamento
+# devolve ordenada alfabeticamente pelo nome — ORDER BY nome em db.py).
+#
+# Bug real (print do Lucas): "VR 94 mercado café da manha (reembolso pix)"
+# registrou como "DÉBITO/PIX" em vez de "VR" — a palavra "pix" no comentário
+# entre parênteses batia com o nome "DÉBITO/PIX", e "DÉBITO..." vem antes de
+# "VR" alfabeticamente, então o antigo `return` no primeiro match da lista
+# escolhia errado mesmo "VR" estando antes no texto.
+# ---------------------------------------------------------------------------
+
+_FORMAS_TESTE = [
+    {"id": 1, "nome": "DÉBITO/PIX"},
+    {"id": 2, "nome": "VR"},
+    {"id": 3, "nome": "CRÉDITO"},
+]
+
+
+def test_forma_pagamento_vence_quem_aparece_primeiro_no_texto():
+    forma = extrair_forma_pagamento(
+        "VR 94 mercado café da manha (reembolso pix)", _FORMAS_TESTE
+    )
+    assert forma["nome"] == "VR"
+
+
+def test_forma_pagamento_pix_isolado_ainda_funciona():
+    forma = extrair_forma_pagamento("50 mercado pix", _FORMAS_TESTE)
+    assert forma["nome"] == "DÉBITO/PIX"
+
+
+def test_forma_pagamento_sem_menção_devolve_none():
+    assert extrair_forma_pagamento("50 mercado", _FORMAS_TESTE) is None

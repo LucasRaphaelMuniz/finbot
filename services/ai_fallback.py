@@ -141,6 +141,16 @@ def interpretar_mensagem(texto: str, categorias: list[dict], formas: list[dict])
                         'descricao_acao': str} — handler.py pede confirmação
                        ("sim") antes de rotear pro comando de verdade; nunca
                        executa direto (ação pode alterar grupo/membros/etc.).
+    - 'consulta_dados' -> {'intencao': 'consulta_dados', 'categoria': dict}
+                       — pergunta sobre o histórico do usuário numa categoria
+                       (29/08/2026, "qual foi o último dia que abasteci o
+                       carro?"). handler.py busca o dado real no banco
+                       (db.get_ultimo_gasto_por_categoria) e monta a
+                       resposta — a IA aqui só identifica QUAL categoria,
+                       nunca inventa a resposta. Se a categoria sugerida não
+                       bater em nenhuma categoria real do usuário, cai em
+                       'indefinido' (mesma lógica anti-alucinação do
+                       'comando').
     - 'indefinido' -> IA não conseguiu deduzir nada útil (ou a chamada falhou,
                        ou sugeriu um comando fora do vocabulário conhecido)
     """
@@ -191,6 +201,16 @@ def interpretar_mensagem(texto: str, categorias: list[dict], formas: list[dict])
             "comando_sugerido": comando_sugerido.strip(),
             "descricao_acao": (resultado.get("descricao_acao") or comando_sugerido).strip(),
         }
+
+    if intencao == "consulta_dados":
+        categoria = _resolver_por_nome(resultado.get("categoria_sugerida"), categorias)
+        if not categoria:
+            logger.warning(
+                "IA sugeriu consulta_dados com categoria fora do vocabulário do "
+                f"usuário, descartada: {resultado.get('categoria_sugerida')!r}"
+            )
+            return {"intencao": "indefinido"}
+        return {"intencao": "consulta_dados", "categoria": categoria}
 
     return {"intencao": "indefinido"}
 

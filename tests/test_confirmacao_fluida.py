@@ -73,22 +73,32 @@ def test_comando_negativo_cancela_sem_executar(monkeypatch, sessao_mock):
     assert sessao_mock["deletada"] is True
 
 
-def test_comando_ambiguo_fica_em_silencio_e_preserva_sessao(monkeypatch, sessao_mock):
-    """Pedido do Lucas (24/07/2026): "quando solicitar sim ou não, se a
-    pessoa responder outra coisa, o bot simplesmente ignora". Resposta
-    vazia = app.py não envia nada. Sessão continua VIVA — a pessoa ainda
-    pode responder *sim* depois, e o timeout de 5 min encerra sozinho."""
+def test_comando_ambiguo_chama_ia_e_devolve_lembrete_sem_executar(monkeypatch, sessao_mock):
+    """Revisão de 29/08/2026 do comportamento de 24/07 (ver
+    handler.py:_fora_do_esperado para o histórico completo da decisão):
+    resposta ambígua NUNCA mais fica em silêncio — a IA é chamada pra
+    decidir, e só devolve "" pra ruído óbvio (parser.parece_ruido). Uma
+    frase real como "e aí, quanto ficou?" não é ruído, então cai na IA; se
+    a IA não reconhecer nada (indefinido), o bot devolve um lembrete em vez
+    de silêncio, e a sessão continua VIVA (a pessoa ainda pode responder
+    *sim* depois, timeout de 5 min encerra sozinho)."""
     executados = []
     monkeypatch.setattr(
         handler, "_despachar_comando",
         lambda uid, cmd: executados.append(cmd) or "não deveria executar",
     )
     monkeypatch.setattr(handler, "get_dados_temp", lambda s: s["dados_temp"])
+    monkeypatch.setattr(handler, "get_categorias", lambda uid: [])
+    monkeypatch.setattr(handler, "get_formas_pagamento", lambda uid: [])
+    monkeypatch.setattr(
+        handler, "interpretar_mensagem",
+        lambda texto, categorias, formas: {"intencao": "indefinido"},
+    )
 
     resposta = handler._processar_confirmacao_comando(1, _SESSAO_COMANDO, "e aí, quanto ficou?")
 
     assert executados == []
-    assert resposta == ""              # silêncio
+    assert resposta != ""                    # nunca mais silêncio
     assert sessao_mock["deletada"] is False  # sessão VIVA
 
 
@@ -169,7 +179,10 @@ def test_gasto_negativo_cancela(monkeypatch, sessao_mock):
     assert sessao_mock["deletada"] is True
 
 
-def test_gasto_ambiguo_fica_em_silencio_e_preserva_sessao(monkeypatch, sessao_mock):
+def test_gasto_ruido_puro_ainda_fica_em_silencio(monkeypatch, sessao_mock):
+    """"kkkk" sozinho continua sendo o único caso que não gasta 1 chamada
+    de LLM (parser.parece_ruido) — ver test_comando_ambiguo_chama_ia_... pro
+    caso de mensagem ambígua com conteúdo real, que agora chama a IA."""
     registrados = []
     monkeypatch.setattr(
         handler, "_registrar_e_confirmar",
@@ -177,10 +190,31 @@ def test_gasto_ambiguo_fica_em_silencio_e_preserva_sessao(monkeypatch, sessao_mo
     )
     monkeypatch.setattr(handler, "get_dados_temp", lambda s: s["dados_temp"])
 
-    resposta = handler._processar_confirmacao_ia(1, _SESSAO_GASTO, "kkkk pois é")
+    resposta = handler._processar_confirmacao_ia(1, _SESSAO_GASTO, "kkkk")
 
     assert registrados == []
     assert resposta == ""
+    assert sessao_mock["deletada"] is False
+
+
+def test_gasto_ambiguo_com_conteudo_chama_ia_e_devolve_lembrete(monkeypatch, sessao_mock):
+    registrados = []
+    monkeypatch.setattr(
+        handler, "_registrar_e_confirmar",
+        lambda *a, **k: registrados.append(a) or "não deveria registrar",
+    )
+    monkeypatch.setattr(handler, "get_dados_temp", lambda s: s["dados_temp"])
+    monkeypatch.setattr(handler, "get_categorias", lambda uid: [])
+    monkeypatch.setattr(handler, "get_formas_pagamento", lambda uid: [])
+    monkeypatch.setattr(
+        handler, "interpretar_mensagem",
+        lambda texto, categorias, formas: {"intencao": "indefinido"},
+    )
+
+    resposta = handler._processar_confirmacao_ia(1, _SESSAO_GASTO, "e aí, quanto ficou?")
+
+    assert registrados == []
+    assert resposta != ""
     assert sessao_mock["deletada"] is False
 
 
@@ -250,4 +284,43 @@ def test_fora_do_esperado_gasto_novo_cai_no_input_livre(monkeypatch, sessao_mock
     resposta = handler._fora_do_esperado(1, "cria uma categoria chamada Pets")
 
     assert resposta == "✅ registrado"
+    assert sessao_mock["deletada"] is True
+
+
+def test_fora_do_esperado_indefinido_devolve_lembrete_sem_silencio(monkeypatch, sessao_mock):
+    """29/08/2026: mensagem que não é ruído nem intenção reconhecida pela
+    IA nunca mais fica muda — devolve um lembrete e preserva a sessão."""
+    monkeypatch.setattr(handler, "get_categorias", lambda uid: [])
+    monkeypatch.setattr(handler, "get_formas_pagamento", lambda uid: [])
+    monkeypatch.setattr(
+        handler, "interpretar_mensagem",
+        lambda texto, categorias, formas: {"intencao": "indefinido"},
+    )
+
+    resposta = handler._fora_do_esperado(1, "e aí, quanto ficou?")
+
+    assert resposta != ""
+    assert sessao_mock["deletada"] is False
+
+
+def test_fora_do_esperado_ia_reconhece_intencao_abandona_sessao(monkeypatch, sessao_mock):
+    """Caso real que motivou a mudança (print do Lucas): "qual foi o último
+    dia que abasteci o carro?" com uma sessão pendente não pode sumir — a
+    IA reconhece 'consulta_dados' e o bot responde com o dado, abandonando
+    a pergunta pendente (mesmo raciocínio de intenção nova já existente)."""
+    categoria = {"id": 7, "nome": "Combustível"}
+    monkeypatch.setattr(handler, "get_categorias", lambda uid: [categoria])
+    monkeypatch.setattr(handler, "get_formas_pagamento", lambda uid: [])
+    monkeypatch.setattr(
+        handler, "interpretar_mensagem",
+        lambda texto, categorias, formas: {"intencao": "consulta_dados", "categoria": categoria},
+    )
+    monkeypatch.setattr(
+        handler, "get_ultimo_gasto_por_categoria",
+        lambda uid, categoria_id: {"valor": 94.0, "data": "2026-08-20", "categoria_nome": "Combustível"},
+    )
+
+    resposta = handler._fora_do_esperado(1, "qual foi o último dia que abasteci o carro?")
+
+    assert "Combustível" in resposta
     assert sessao_mock["deletada"] is True

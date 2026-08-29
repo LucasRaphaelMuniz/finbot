@@ -352,9 +352,10 @@ def extrair_forma_pagamento(texto: str, formas: list):
     """
     Retorna dict da forma detectada ou None.
 
-    Duas correções (bug real 17/07/2026, "VA atualizacao 264" caiu no menu
+    Três correções (bug real 17/07/2026, "VA atualizacao 264" caiu no menu
     mesmo com "VA" no texto — não era esse caso específico, mas o teste
-    revelou dois problemas vizinhos no mesmo mecanismo de match):
+    revelou dois problemas vizinhos no mesmo mecanismo de match; terceira
+    correção — bug real 29/08/2026, ver abaixo):
 
     1. Comparação por TOKEN (fronteira de palavra), não substring — "VA"
        não pode casar dentro de "vaquinha". Antes: `"va" in "vaquinha 30"`
@@ -363,9 +364,26 @@ def extrair_forma_pagamento(texto: str, formas: list):
     2. Comparação sem acento nos dois lados — "credito" (usuário digita
        sem acento) não batia com o nome "CRÉDITO" cadastrado (com acento),
        porque só a versão SEM normalizar era comparada.
+    3. Quando MAIS DE UMA forma tem token batendo na mesma mensagem, vence
+       quem aparece PRIMEIRO NO TEXTO, não quem aparece primeiro em
+       `formas` (que vem de `get_formas_pagamento`, ordenado
+       alfabeticamente pelo nome — ORDER BY nome em db.py). Bug real
+       (29/08/2026, print do Lucas): "VR 94 mercado café da manha
+       (reembolso pix)" registrou como forma "DÉBITO/PIX" em vez de "VR".
+       A palavra "pix" no comentário entre parênteses batia com o nome da
+       forma "DÉBITO/PIX", e "DÉBITO..." vem alfabeticamente antes de "VR"
+       na lista — o primeiro `return forma` do loop antigo parava ali,
+       mesmo "VR" estando ANTES no texto e sendo claramente a forma
+       pretendida. Comparar por posição do match no texto (não por posição
+       da forma na lista) resolve isso de forma genérica, sem precisar
+       tratar "pix entre parênteses" como caso especial.
     """
     texto_normalizado = _sem_acento(texto.lower())
-    tokens_texto = set(re.split(r"\W+", texto_normalizado)) - {""}
+    tokens_ordem = [t for t in re.split(r"\W+", texto_normalizado) if t]
+    tokens_texto = set(tokens_ordem)
+
+    melhor_forma = None
+    melhor_pos = None
 
     for forma in formas:
         nome_normalizado = _sem_acento(forma["nome"].lower())
@@ -374,8 +392,7 @@ def extrair_forma_pagamento(texto: str, formas: list):
         # inteiro no texto — mínimo 2 chars pra não casar token de 1 letra
         # à toa.
         palavras_nome = [w for w in re.split(r"\W+", nome_normalizado) if len(w) >= 2]
-        if any(w in tokens_texto for w in palavras_nome):
-            return forma
+        candidatos = [w for w in palavras_nome if w in tokens_texto]
 
         # Aliases por tipo (ex: forma "CRÉDITO" com o usuário digitando
         # "cartao" ou "visa"). Gatilho do grupo: nome da forma contém o
@@ -387,15 +404,26 @@ def extrair_forma_pagamento(texto: str, formas: list):
         # aliases um do outro dentro do próprio grupo ("vr" é alias de
         # "ticket", que também é o grupo de "va") — alargar o gatilho ali
         # fazia "vr almoço" casar com a forma "VA" por tabela cruzada.
-        for fragmento, aliases in _FORMA_ALIASES:
-            aliases_normalizados = [_sem_acento(a) for a in aliases]
-            gatilho = fragmento in nome_normalizado
-            if fragmento != "ticket":
-                gatilho = gatilho or nome_normalizado in aliases_normalizados
-            if gatilho and any(a in tokens_texto for a in aliases_normalizados):
-                return forma
+        if not candidatos:
+            for fragmento, aliases in _FORMA_ALIASES:
+                aliases_normalizados = [_sem_acento(a) for a in aliases]
+                gatilho = fragmento in nome_normalizado
+                if fragmento != "ticket":
+                    gatilho = gatilho or nome_normalizado in aliases_normalizados
+                if gatilho:
+                    candidatos = [a for a in aliases_normalizados if a in tokens_texto]
+                    if candidatos:
+                        break
 
-    return None
+        if not candidatos:
+            continue
+
+        pos = min(tokens_ordem.index(c) for c in candidatos)
+        if melhor_pos is None or pos < melhor_pos:
+            melhor_pos = pos
+            melhor_forma = forma
+
+    return melhor_forma
 
 
 # ---------------------------------------------------------------------------
@@ -595,6 +623,50 @@ def parece_correcao(texto: str) -> bool:
     if not txt:
         return False
     return any(m in txt for m in _MARCADORES_CORRECAO)
+
+
+# ---------------------------------------------------------------------------
+# Ruído puro numa resposta fora do esperado (29/08/2026)
+#
+# Pedido do Lucas: nenhuma mensagem pode ficar sem resposta — quando algo
+# não bate em nenhum dos atalhos baratos acima (nova intenção / correção),
+# a IA tem que ser chamada pra decidir, em vez de silêncio (ver
+# handler.py:_fora_do_esperado). A ÚNICA exceção que continua em silêncio,
+# sem gastar 1 chamada de LLM, é ruído óbvio de verdade — risada solta,
+# emoji, "ok"/"beleza" sem mais nada — onde perguntar pra IA seria caro e
+# a resposta é sempre a mesma (nada, é só reação, não pedido).
+# ---------------------------------------------------------------------------
+
+_RUIDO_PALAVRAS = {
+    "ok", "okay", "blz", "beleza", "top", "valeu", "vlw", "show",
+    "certo", "entendi", "ah", "hm", "hum", "uhum", "tá", "ta", "sim sim",
+}
+
+_RUIDO_RE_KKK = re.compile(r"^k{2,}$")          # "kkkk", "kkkkkk"
+_RUIDO_RE_RS  = re.compile(r"^(rs)+$")          # "rs", "rsrs", "rsrsrs"
+_RUIDO_RE_HA  = re.compile(r"^(ha|he|ha ha)+$")  # "haha", "hehe"
+
+
+def parece_ruido(texto: str) -> bool:
+    """
+    True só pra ruído ÓBVIO (risada, emoji solto, confirmação vazia sem
+    conteúdo) — o único caso que ainda fica em silêncio sem chamar IA.
+    Deliberadamente restrito: qualquer coisa com cara de conteúdo de
+    verdade (mesmo curta) cai fora daqui e vai pra IA decidir — é melhor
+    gastar 1 chamada de LLM a mais do que ignorar um pedido real.
+    """
+    txt = _sem_acento((texto or "").strip().lower())
+    if not txt:
+        return True
+    txt_compacto = txt.replace(" ", "")
+    if txt in _RUIDO_PALAVRAS:
+        return True
+    if _RUIDO_RE_KKK.match(txt_compacto) or _RUIDO_RE_RS.match(txt_compacto) or _RUIDO_RE_HA.match(txt_compacto):
+        return True
+    # Só emoji/pontuação, sem nenhuma letra ou dígito (ex: "👍", "🙏🙏").
+    if not any(c.isalnum() for c in txt):
+        return True
+    return False
 
 
 # ---------------------------------------------------------------------------
