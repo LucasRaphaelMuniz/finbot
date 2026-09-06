@@ -58,6 +58,7 @@ from services.ai_fallback import (
     interpretar_correcao_comando,
 )
 from services.grupos import adicionar_membro as adicionar_membro_com_limite
+from services.faturas import status_cartao
 from utils.app_error import AppError
 from utils.respostas import eh_afirmativo, eh_negativo
 from utils.telefone import normalizar as _normalizar_telefone
@@ -1274,11 +1275,22 @@ def _registrar_e_confirmar(uid: int, forma: dict, categoria: dict,
         linhas.append(f"🗓 Data: {data.strftime('%d/%m/%Y')}")
 
     if limite:
-        sobra = limite - gasto_mes
-        pct   = (gasto_mes / limite) * 100
+        # 06/09/2026: mesma base do /saldo (comandos.py::cmd_saldo) — em
+        # cartão o "Saldo Disponível" desconta a PROJEÇÃO da fatura, não só
+        # o já lançado. Duas mensagens do mesmo bot com o mesmo rótulo não
+        # podem mostrar números diferentes pro mesmo cartão.
+        base_saldo = gasto_mes
+        if forma.get("dia_fechamento"):
+            status_c = status_cartao(uid, forma["id"])
+            if status_c:
+                base_saldo = status_c["fatura_atual_estimada"]
+                gasto_mes  = status_c["fatura_atual"]
+
+        sobra = limite - base_saldo
+        pct   = (base_saldo / limite) * 100
         linhas.append(f"*Saldo Disponível: {_brl(sobra)}*")
         linhas.append(f"Total: {_brl(gasto_mes)} de {_brl(limite)}")
-        if gasto_mes > limite:
+        if base_saldo > limite:
             linhas.append(f"🚨 Limite do {forma_nome} ultrapassado!")
         elif pct >= 80:
             linhas.append(f"⚠️ Já foi usado {pct:.0f}% do limite do {forma_nome}!")

@@ -118,10 +118,19 @@ def cmd_saldo(usuario_id: int, mensagem: str) -> str:
                 continue
             gasto  = status["fatura_atual"]
             limite = status["limite_mensal"]
+            # 06/09/2026 (correção do Lucas): pra CARTÃO o "Saldo
+            # Disponível" é limite - PROJEÇÃO da fatura, não limite - gasto
+            # já lançado. O que ainda vai cair na fatura (fixa antecipada
+            # que não chegou o dia + fixa nem lançada) já está comprometido:
+            # mostrar o saldo contra o real dizia que sobrava mais dinheiro
+            # do que sobra de fato. Fonte única em services/faturas.py
+            # (limite_disponivel), pra o site mostrar o mesmo número.
+            base_saldo = status["fatura_atual_estimada"]
         else:
             status = None
             gasto  = float(f["gasto_mes"])
             limite = float(f["limite_mensal"]) if f["limite_mensal"] else None
+            base_saldo = gasto
 
         # Forma sem limite (ex.: Custos Fixos) não tem "saldo" de verdade
         # pra comparar — pedido do Lucas: nem a linha "Total: X gastos este
@@ -132,8 +141,13 @@ def cmd_saldo(usuario_id: int, mensagem: str) -> str:
         linhas_forma = []
 
         if limite:
-            sobra = limite - gasto
-            pct   = (gasto / limite) * 100
+            # base_saldo = projeção da fatura no cartão, gasto real nas
+            # demais formas (não existe projeção pra elas hoje). O alerta de
+            # limite segue a MESMA base do saldo de propósito: um "Saldo
+            # Disponível" negativo sem o "🚨 Limite ultrapassado!" logo
+            # abaixo seria contraditório na mesma mensagem.
+            sobra = limite - base_saldo
+            pct   = (base_saldo / limite) * 100
             linhas_forma.append(f"*Saldo Disponível: {_brl(sobra)}*")
             linhas_forma.append(f"Total: {_brl(gasto)} / {_brl(limite)}")
 
@@ -151,7 +165,7 @@ def cmd_saldo(usuario_id: int, mensagem: str) -> str:
                     f"📈 Projeção Fatura: {_brl(status['fatura_atual_estimada'])}"
                 )
 
-            if gasto > limite:
+            if base_saldo > limite:
                 linhas_forma.append("🚨 Limite ultrapassado!")
             elif pct >= 80:
                 linhas_forma.append(f"⚠️ {pct:.0f}% do limite usado")
@@ -178,16 +192,14 @@ def cmd_saldo(usuario_id: int, mensagem: str) -> str:
     # "/saldo Nubank" a pessoa quer olhar aquele cartão, um total de TODAS
     # as formas ali embaixo confundiria mais do que ajudaria.
     #
-    # Duas bases diferentes de propósito, cada uma seguindo a definição que
-    # o Lucas deu: "Total Gasto" usa a Projeção Fatura (fatura_atual_estimada
-    # — já inclui fixa que ainda não venceu), enquanto "Saldo Restante" soma
-    # a mesma "Saldo Disponível" que já aparece linha a linha acima (baseada
-    # no gasto REAL/fatura_atual, não na projeção). Ou seja: o "Total Gasto"
-    # é otimista (conta o que ainda vai entrar), o "Saldo Restante" é
-    # conservador (só desconta o que já é fatura fechada). É assim que os
-    # dois nomes já eram usados nas linhas por forma; manter a mesma base
-    # aqui evita um "Saldo Restante" que não bate com a soma das linhas de
-    # cima se alguém for conferir na mão.
+    # 06/09/2026: as duas linhas usam a MESMA base das linhas por forma
+    # (projeção no cartão, gasto real nas demais) — antes o "Saldo Restante"
+    # era propositalmente conservador (fatura_atual), mas depois da correção
+    # do Saldo Disponível por cartão isso quebraria a única invariante que
+    # importa aqui: "Saldo Restante" tem que ser a soma dos "Saldo
+    # Disponível" mostrados acima, senão não fecha se alguém conferir na
+    # mão. Efeito colateral bom: Total Gasto + Saldo Restante = soma dos
+    # limites.
     #
     # As DUAS só somam formas COM limite (29/08/2026, correção do Lucas: o
     # Total Gasto bateu R$11.764,77 porque somava também o gasto_mes de
@@ -205,15 +217,14 @@ def cmd_saldo(usuario_id: int, mensagem: str) -> str:
                 if not status_f:
                     continue
                 gasto_estimado_f = status_f["fatura_atual_estimada"]
-                gasto_real_f = status_f["fatura_atual"]
                 limite_f = status_f["limite_mensal"]
             else:
-                gasto_estimado_f = gasto_real_f = float(f["gasto_mes"])
+                gasto_estimado_f = float(f["gasto_mes"])
                 limite_f = float(f["limite_mensal"]) if f["limite_mensal"] else None
 
             if limite_f:
                 total_gasto += gasto_estimado_f
-                saldo_restante += (limite_f - gasto_real_f)
+                saldo_restante += (limite_f - gasto_estimado_f)
                 orcamento_mensal += limite_f
 
         linhas.append("")

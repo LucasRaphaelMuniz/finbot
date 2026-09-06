@@ -212,7 +212,13 @@ def status_cartao(usuario_id: int, forma_id: int) -> dict | None:
         "fixas_previstas_qtd": fixas_pendentes_qtd,
         "ajuste_fatura_atual": ajuste_atual,
         "ajuste_motivo_atual": motivo_atual,
-        "limite_disponivel": (limite_mensal - fatura_atual) if limite_mensal is not None else None,
+        # 06/09/2026 (correção do Lucas): limite disponível = limite -
+        # ESTIMADA, não - fatura_atual. O que já se sabe que vai cair na
+        # fatura (fixa antecipada ainda não cobrada + fixa nem lançada) já
+        # está comprometido; descontar só o real dizia que sobrava mais
+        # limite do que sobra. Mesmo número do "Saldo Disponível" do bot
+        # (comandos.py::cmd_saldo) — bot e site não podem divergir.
+        "limite_disponivel": (limite_mensal - fatura_atual_estimada) if limite_mensal is not None else None,
         "fatura_anterior": fatura_anterior,
         "fatura_anterior_bruta": fatura_anterior_bruta,
         "fatura_anterior_paga": fatura_anterior_paga,
