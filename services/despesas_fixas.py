@@ -29,11 +29,14 @@ gerar 1 query extra por despesa fixa a cada rodada do cron.
 """
 
 import calendar
+import logging
 from datetime import date
 
 import psycopg
 from db import get_conn, _get_grupo_id
 from services.competencia import calcular_competencia, dia_regra, somar_meses
+
+logger = logging.getLogger(__name__)
 
 
 def get_despesas_fixas(usuario_id: int, apenas_ativas: bool = True) -> list[dict]:
@@ -68,7 +71,31 @@ def criar_despesa_fixa(usuario_id: int, descricao: str, valor: float, dia_lancam
                         categoria_id: int = None, forma_pagamento_id: int = None,
                         parcelas_total: int = None) -> dict:
     """parcelas_total (migração 025): fixa com prazo — financiamento,
-    consórcio. NULL = sem fim (aluguel, internet)."""
+    consórcio. NULL = sem fim (aluguel, internet).
+
+    Lança NA HORA (25/09/2026, pedido do Lucas): antes a fixa nova ficava
+    "ainda não lançada" até o próximo ciclo do lançador (6h ou restart do
+    processo). Agora roda o lançador só pra ESTA fixa logo após o INSERT —
+    mesma função do cron, então a regra de competência/antecipação é a
+    mesma, sem uma segunda cópia. Vale pro site e pro bot (os dois chamam
+    esta função).
+
+    Falha no lançamento imediato NÃO derruba o cadastro: a fixa já foi
+    gravada, e o cron das 6h faz o catch-up. Por isso o try/except aqui —
+    é o único ponto em que engolir a exceção é o comportamento certo.
+    """
+    fixa = _inserir_despesa_fixa(usuario_id, descricao, valor, dia_lancamento,
+                                 categoria_id, forma_pagamento_id, parcelas_total)
+    try:
+        lancar_despesas_fixas_do_mes(fixa_id=fixa["id"])
+    except Exception:
+        logger.exception("Lançamento imediato da fixa %s falhou (cron faz o catch-up).", fixa["id"])
+    return fixa
+
+
+def _inserir_despesa_fixa(usuario_id: int, descricao: str, valor: float, dia_lancamento: int,
+                           categoria_id: int, forma_pagamento_id: int,
+                           parcelas_total: int) -> dict:
     with get_conn() as conn:
         gid = _get_grupo_id(conn, usuario_id)
         with conn.cursor() as cur:
@@ -193,8 +220,22 @@ def _inserir_lancamento(conn, fixa: dict, data_devida: date, competencia: date,
             return None
 
 
-def lancar_despesas_fixas_do_mes(hoje: date = None) -> list[dict]:
+def lancar_despesas_fixas_do_mes(hoje: date = None, fixa_id: int = None) -> list[dict]:
     """
+    `fixa_id` (25/09/2026): restringe a rodada a UMA fixa — usado por
+    criar_despesa_fixa pra lançar a fixa nova na hora, sem varrer as fixas
+    de todos os usuários. Sem ele, comportamento do cron (todas as ativas).
+
+    NUNCA PRA TRÁS (25/09/2026, pedido do Lucas: "fixa nova deve constar só
+    do mês que estou lançando pra frente"): o passe 1 não lança numa
+    competência ANTERIOR à primeira competência que a fixa já tem em
+    `gastos` nem à competência VIGENTE hoje pela régua dela (cartão/
+    dia_corte) — o piso é o menor dos dois. Sem isso, fixa do dia 5 cadastrada
+    no dia 26 (ciclo de corte 25 já virou) caía no catch-up e era lançada
+    05/do mês corrente, no ciclo que já fechou. Fixa com histórico não é
+    afetada: a primeira competência dela é antiga, o catch-up por
+    downtime continua valendo.
+
     Dois passes por despesa fixa ativa:
 
     PASSE 1 — mês corrente: lança a fixa cujo dia efetivo JÁ CHEGOU
@@ -256,11 +297,15 @@ def lancar_despesas_fixas_do_mes(hoje: date = None) -> list[dict]:
             cur.execute(
                 """SELECT f.*, fp.dia_fechamento, fp.dia_vencimento, u.dia_corte,
                           (SELECT COUNT(*) FROM gastos g WHERE g.despesa_fixa_id = f.id)
-                              AS lancadas
+                              AS lancadas,
+                          (SELECT MIN(g.competencia) FROM gastos g WHERE g.despesa_fixa_id = f.id)
+                              AS primeira_lancada
                    FROM despesas_fixas f
                    LEFT JOIN formas_pagamento fp ON fp.id = f.forma_pagamento_id
                    LEFT JOIN usuarios u          ON u.id  = f.usuario_id
                    WHERE f.ativa = TRUE"""
+                + (" AND f.id = %s" if fixa_id else ""),
+                (fixa_id,) if fixa_id else None,
             )
             fixas = [dict(r) for r in cur.fetchall()]
 
@@ -282,12 +327,19 @@ def lancar_despesas_fixas_do_mes(hoje: date = None) -> list[dict]:
             # cartão que fecha dia 10 tem que cair na fatura que fecharia
             # pro dia 5, senão o atraso do processo mudaria a fatura.
             data_devida = date(hoje.year, hoje.month, dia_efetivo)
-            competencia_corrente = calcular_competencia(
-                data_devida, dia_regra(fixa.get("dia_fechamento"), fixa.get("dia_corte"))
-            )
+            regra = dia_regra(fixa.get("dia_fechamento"), fixa.get("dia_corte"))
+            competencia_corrente = calcular_competencia(data_devida, regra)
+
+            # Piso "nunca pra trás" (ver docstring). min() com a vigente
+            # porque a primeira lançada pode ser a ANTECIPADA do passe 2
+            # (fixa do dia 20 cadastrada dia 10: outubro nasce antes de
+            # setembro) — sem o min, setembro seria pulado no dia 20.
+            vigente = calcular_competencia(hoje, regra)
+            primeira = fixa.get("primeira_lancada")
+            piso = min(primeira.replace(day=1), vigente) if primeira else vigente
 
             # ---- Passe 1: mês corrente (dia chegou) --------------------
-            if hoje.day >= dia_efetivo:
+            if hoje.day >= dia_efetivo and competencia_corrente >= piso:
                 valor_lancado, usar_pendente = _valor_efetivo(fixa, hoje)
 
                 gasto = None

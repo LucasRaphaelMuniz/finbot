@@ -99,8 +99,11 @@ def projetar_despesas_fixas(conn, gid: int | None, usuario_id: int, mes: str) ->
     mas ainda não têm um gasto real lançado ali (cron ainda não rodou pra
     aquele mês, ou o mês é futuro).
 
-    Só projeta mês atual pra frente (não polui mês passado com "buracos" do
-    cron — isso seria sinal de outro problema, não de projeção legítima).
+    Só projeta da competência VIGENTE de cada fixa pra frente — vigente pela
+    régua dela (dia_fechamento do cartão ou dia_corte do dono), não pelo mês
+    calendário (ver comentário no loop, correção de 25/09/2026). Não polui
+    mês passado com "buracos" do cron, e fixa recém-cadastrada não aparece
+    em ciclo que já fechou.
 
     Cada fixa é testada contra DOIS candidatos de data de lançamento (mês
     alvo e mês anterior a ele) porque `calcular_competencia` pode empurrar
@@ -178,13 +181,31 @@ def projetar_despesas_fixas(conn, gid: int | None, usuario_id: int, mes: str) ->
     def _mes_anterior(ano: int, mes_num: int) -> tuple[int, int]:
         return (ano - 1, 12) if mes_num == 1 else (ano, mes_num - 1)
 
-    hoje_mes = hoje.replace(day=1)
-    meses_a_frente = (competencia_alvo.year - hoje_mes.year) * 12 + (competencia_alvo.month - hoje_mes.month)
-
     projetados = []
     for fixa in fixas:
         if fixa["id"] in ja_lancadas:
             continue  # já lançada de verdade nesse mês — não duplica
+
+        # Competência VIGENTE desta fixa hoje, pela mesma régua do lançador
+        # (cartão -> dia_fechamento; fora do cartão -> dia_corte do dono).
+        # Corrigido em 25/09/2026 (print do Lucas: "Creche Proporcional",
+        # fixa de 1 mês cadastrada no dia 25 = dia de corte, aparecia no
+        # board de SETEMBRO datada 25/08 e sumia de OUTUBRO). Antes o piso
+        # era o mês CALENDÁRIO (hoje.replace(day=1)): no dia do corte o
+        # calendário ainda é setembro, mas o ciclo já virou pra outubro —
+        # então a fixa nova era projetada no ciclo que já fechou, com a
+        # data do mês anterior (25/08), e o prazo de 1 mês se esgotava ali.
+        # Regra pedida pelo Lucas: fixa nova só conta do ciclo em que foi
+        # lançada pra frente, nunca pra trás.
+        competencia_vigente = calcular_competencia(
+            hoje, dia_regra(fixa.get("dia_fechamento"), fixa.get("dia_corte"))
+        )
+        if competencia_alvo < competencia_vigente:
+            continue
+        meses_a_frente = (
+            (competencia_alvo.year - competencia_vigente.year) * 12
+            + (competencia_alvo.month - competencia_vigente.month)
+        )
 
         # Fixa com prazo (parcelas_total, migração 025): não projeta além do
         # fim — financiamento com 2 parcelas restantes não pode aparecer 6
