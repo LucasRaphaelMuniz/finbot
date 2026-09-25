@@ -112,8 +112,53 @@ def _inserir_despesa_fixa(usuario_id: int, descricao: str, valor: float, dia_lan
             return dict(cur.fetchone())
 
 
+def _apagar_lancamentos_pendentes(conn, fixa_ids: list[int]) -> int:
+    """
+    Ao REMOVER uma fixa (ação do usuário), apaga os lançamentos dela que
+    ainda NÃO foram pagos, da competência vigente pra frente (25/09/2026,
+    decisão do Lucas). Antes o soft-delete só parava o lançador: o gasto do
+    ciclo atual/antecipado continuava no board, e recadastrar a fixa gerava
+    um segundo lançamento na mesma competência — duplicava.
+
+    Mantém: pagos (dinheiro que já saiu) e ciclos passados (histórico).
+    "Vigente" pela régua da própria fixa (cartão/dia_corte do dono), igual
+    ao lançador e à projeção.
+
+    NÃO é chamada quando a fixa com prazo se desativa sozinha ao atingir o
+    total — ali a última parcela antecipada é legítima e tem que ficar.
+    Sem supressão (migração 026): a fixa está inativa, o lançador já não a
+    considera.
+    """
+    if not fixa_ids:
+        return 0
+    hoje = date.today()
+    apagados = 0
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT f.id, fp.dia_fechamento, u.dia_corte
+               FROM despesas_fixas f
+               LEFT JOIN formas_pagamento fp ON fp.id = f.forma_pagamento_id
+               LEFT JOIN usuarios u          ON u.id  = f.usuario_id
+               WHERE f.id = ANY(%s)""",
+            (list(fixa_ids),),
+        )
+        for f in cur.fetchall():
+            vigente = calcular_competencia(hoje, dia_regra(f["dia_fechamento"], f["dia_corte"]))
+            cur.execute(
+                """DELETE FROM gastos
+                   WHERE despesa_fixa_id = %s
+                     AND COALESCE(pago, FALSE) = FALSE
+                     AND DATE_TRUNC('month', competencia) >= DATE_TRUNC('month', %s::date)""",
+                (f["id"], vigente),
+            )
+            apagados += cur.rowcount or 0
+    return apagados
+
+
 def desativar_despesa_fixa(usuario_id: int, descricao: str) -> bool:
-    """Soft-delete: marca ativa=False. Não lança mais, mas preserva o histórico já lançado."""
+    """Soft-delete: marca ativa=False. Não lança mais, preserva o histórico
+    (pago/ciclos passados) e apaga os lançamentos pendentes do ciclo vigente
+    pra frente (_apagar_lancamentos_pendentes)."""
     with get_conn() as conn:
         gid = _get_grupo_id(conn, usuario_id)
         with conn.cursor() as cur:
@@ -130,9 +175,10 @@ def desativar_despesa_fixa(usuario_id: int, descricao: str) -> bool:
                     "AND LOWER(descricao) LIKE %s RETURNING id",
                     (usuario_id, f"%{descricao.lower()}%"),
                 )
-            updated = cur.fetchone()
-            conn.commit()
-            return updated is not None
+            ids = [r["id"] for r in cur.fetchall()]
+        _apagar_lancamentos_pendentes(conn, ids)
+        conn.commit()
+        return bool(ids)
 
 
 def _dia_efetivo(dia_lancamento: int, ano: int, mes: int) -> int:
@@ -552,7 +598,9 @@ def atualizar_despesa_fixa(usuario_id: int, fixa_id: int, descricao: str = None,
 
 def desativar_despesa_fixa_por_id(usuario_id: int, fixa_id: int) -> bool:
     """Soft-delete por id (mesma razão da versão por descrição usada pelo
-    bot: gastos.despesa_fixa_id não tem ON DELETE CASCADE/SET NULL)."""
+    bot: gastos.despesa_fixa_id não tem ON DELETE CASCADE/SET NULL). Apaga
+    os lançamentos pendentes do ciclo vigente pra frente, igual à versão do
+    bot."""
     with get_conn() as conn:
         gid = _get_grupo_id(conn, usuario_id)
         with conn.cursor() as cur:
@@ -568,6 +616,7 @@ def desativar_despesa_fixa_por_id(usuario_id: int, fixa_id: int) -> bool:
                     "WHERE id = %s AND usuario_id = %s AND grupo_id IS NULL AND ativa = TRUE RETURNING id",
                     (fixa_id, usuario_id),
                 )
-            updated = cur.fetchone()
-            conn.commit()
-            return updated is not None
+            ids = [r["id"] for r in cur.fetchall()]
+        _apagar_lancamentos_pendentes(conn, ids)
+        conn.commit()
+        return bool(ids)
