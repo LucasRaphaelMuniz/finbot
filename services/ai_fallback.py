@@ -35,7 +35,9 @@ demais até pra tentar regex).
 
 from difflib import SequenceMatcher
 
-from ai import classificar_mensagem, corrigir_comando, sugerir_categoria_forma
+from datetime import date
+
+from ai import classificar_mensagem, corrigir_comando, sugerir_categoria_forma, extrair_gasto
 from utils.logging_config import obter_logger
 
 logger = obter_logger("finbot.ai_fallback")
@@ -364,3 +366,60 @@ def completar_categoria_forma(
     categoria = categoria_atual or _resolver_por_nome(sugestao.get("categoria_sugerida"), categorias)
     forma     = forma_atual or _resolver_por_nome(sugestao.get("forma_sugerida"), formas)
     return categoria, forma
+
+
+def verificar_gasto(
+    mensagem: str,
+    categorias: list[dict],
+    formas: list[dict],
+    valor: float,
+    data: date | None,
+    hoje: date | None = None,
+) -> dict | None:
+    """
+    02/10/2026 (pedido do Lucas): todo gasto passa pela IA antes de gravar.
+    Compara VALOR e DATA que o regex extraiu com os que a IA extraiu sozinha.
+
+    Retorna None se a IA falhar (rede, timeout, JSON inválido) — quem chama
+    segue só com o regex, como era antes. Senão, um dict:
+    - 'eh_gasto': a IA acha que é um gasto?
+    - 'concorda': valor e data batem com o regex?
+    - 'valor', 'data': o que a IA extraiu (data None = hoje)
+    - 'categoria', 'forma': sugestão da IA já resolvida contra as listas
+      reais do usuário (ou None) — usada pra completar o que a palavra-chave
+      não achou, no lugar de uma 2ª chamada (completar_categoria_forma).
+    """
+    hoje = hoje or date.today()
+    try:
+        r = extrair_gasto(
+            mensagem,
+            [c["nome"] for c in categorias],
+            [f["nome"] for f in formas],
+            hoje.isoformat(),
+        )
+    except Exception as exc:
+        logger.error(f"Falha na verificação de gasto via IA: {exc}")
+        return None
+
+    try:
+        valor_ia = float(r["valor"]) if r.get("valor") is not None else None
+    except (TypeError, ValueError):
+        valor_ia = None
+    try:
+        data_ia = date.fromisoformat(r["data"]) if r.get("data") else None
+    except (TypeError, ValueError):
+        data_ia = None
+
+    concorda = (
+        valor_ia is not None
+        and abs(valor_ia - valor) < 0.005
+        and (data_ia or hoje) == (data or hoje)
+    )
+    return {
+        "eh_gasto":  bool(r.get("eh_gasto")),
+        "concorda":  concorda,
+        "valor":     valor_ia,
+        "data":      data_ia,
+        "categoria": _resolver_por_nome(r.get("categoria_sugerida"), categorias),
+        "forma":     _resolver_por_nome(r.get("forma_sugerida"), formas),
+    }

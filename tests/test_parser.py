@@ -144,3 +144,18 @@ def test_forma_pagamento_pix_isolado_ainda_funciona():
 
 def test_forma_pagamento_sem_menção_devolve_none():
     assert extrair_forma_pagamento("50 mercado", _FORMAS_TESTE) is None
+
+
+# 02/10/2026 — pedaço de data não é valor (print do Lucas: "credito mercado
+# 30/09 feira 12" registrou R$30, o dia da data).
+def test_valor_ignora_data_no_meio():
+    assert extrair_valor("credito mercado 30/09 feira 12") == 12.0
+    assert extrair_valor("credito mercado 30/09 feira  7,90") == 7.9
+
+
+def test_valor_ignora_data_com_hifen_e_ano():
+    assert extrair_valor("mercado 01-08-2026 pix 45") == 45.0
+
+
+def test_valor_ignora_parcela_n_de_m():
+    assert extrair_valor("Amazon 2/12 150") == 150.0

@@ -348,6 +348,54 @@ def sugerir_categoria_forma(texto: str, categorias: list[str], formas: list[str]
 
 
 # ---------------------------------------------------------------------------
+# Verificação de gasto por IA (02/10/2026, pedido do Lucas: "toda mensagem
+# passe por uma classificação de IA"). Bug que motivou: "credito mercado
+# 30/09 feira 12" registrou R$30 — o regex leu o dia da data como valor.
+# A IA extrai o gasto da mensagem SEM ver o que o regex achou (pra não ser
+# ancorada nele); services/ai_fallback.py::verificar_gasto compara os dois.
+# ---------------------------------------------------------------------------
+
+def _montar_prompt_extrair_gasto(texto: str, categorias: list[str], formas: list[str], hoje: str) -> str:
+    return (
+        "Você extrai gastos de mensagens de WhatsApp de um bot financeiro "
+        "brasileiro (moeda: real). Hoje é " + hoje + ".\n\n"
+        f"Categorias disponíveis: [{', '.join(categorias)}]\n"
+        f"Formas de pagamento disponíveis: [{', '.join(formas)}]\n\n"
+        "Regras:\n"
+        "- Datas aparecem como dd/mm, dd-mm ou dd.mm (ex: '30/09' = 30 de "
+        "setembro). Número que é parte de data NUNCA é o valor.\n"
+        "- Vírgula é separador decimal ('7,90' = 7.90).\n"
+        "- Se a mensagem não for o registro de um gasto (pergunta, comando, "
+        "conversa), eh_gasto=false.\n\n"
+        "Responda SOMENTE em JSON com as chaves:\n"
+        "- eh_gasto: true/false\n"
+        "- valor: número decimal do gasto (ex: 12.0), ou null\n"
+        "- data: data do gasto em YYYY-MM-DD se a mensagem citar uma data, "
+        "senão null (null = hoje)\n"
+        "- categoria_sugerida: uma categoria da lista, ou null\n"
+        "- forma_sugerida: uma forma da lista, ou null\n\n"
+        f"Mensagem: {texto}\n\n"
+        "Responda apenas o JSON, sem explicações."
+    )
+
+
+def extrair_gasto(texto: str, categorias: list[str], formas: list[str], hoje: str) -> dict:
+    """Retorna {'eh_gasto', 'valor', 'data', 'categoria_sugerida',
+    'forma_sugerida'}. Timeout curto: quem chama segue só com o regex se a
+    OpenAI demorar/cair — o bot não pode parar de registrar por isso."""
+    prompt = _montar_prompt_extrair_gasto(texto, categorias, formas, hoje)
+    resp = _client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=150,
+        temperature=0,
+        response_format={"type": "json_object"},
+        timeout=8,
+    )
+    return json.loads(resp.choices[0].message.content)
+
+
+# ---------------------------------------------------------------------------
 # Correção de um comando pendente (24/07/2026)
 #
 # "falei errado, o nome correto é teste123" não significa nada sozinho — só

@@ -55,6 +55,7 @@ from services.entradas import (
 from services.ai_fallback import (
     interpretar_mensagem,
     completar_categoria_forma,
+    verificar_gasto,
     interpretar_correcao_comando,
 )
 from services.grupos import adicionar_membro as adicionar_membro_com_limite
@@ -80,7 +81,7 @@ from parser import (
     parece_correcao,
     parece_ruido,
     limpar_descricao,
-    extrair_data,
+    extrair_data_e_resto,
 )
 from comandos import cmd_saldo, cmd_resumo, cmd_limite, cmd_ajuda, cmd_gastos, cmd_contas
 from services.contas_mes import buscar_contas_abertas, listar_contas_mes, marcar_conta
@@ -586,25 +587,50 @@ def _processar_input_livre(uid: int, mensagem: str) -> str:
     forma      = extrair_forma_pagamento(mensagem, formas)
     parcelas   = extrair_parcelas(mensagem)
 
-    # Data explícita no fim da mensagem (03/08/2026, pedido do Lucas: "...
-    # 01-08" registra com data 01/08, não hoje — ver parser.extrair_data).
+    # Data explícita na mensagem (03/08/2026, pedido do Lucas: "...
+    # 01-08" registra com data 01/08, não hoje — ver parser.extrair_data_e_resto).
     # Tira o token da data ANTES de montar a descrição (limpar_descricao só
     # sabe tirar valor/categoria/forma, não data) — senão "01-08" sobrava
     # solto na Descrição. Só compra parcelada fica de fora por enquanto:
     # cada parcela já calcula sua própria competência mês a mês
     # (services/parcelamento.py), misturar com uma data manual da 1ª
     # parcela é conta pra outro dia, não pedida agora.
-    data_gasto = extrair_data(mensagem)
+    data_gasto, sem_data = extrair_data_e_resto(mensagem)
     mensagem_para_descricao = mensagem
     if data_gasto and not parcelas:
-        partes = mensagem.rsplit(None, 1)
-        mensagem_para_descricao = partes[0] if len(partes) > 1 else ""
+        mensagem_para_descricao = sem_data
 
-    if categoria and forma:
-        descricao = limpar_descricao(mensagem_para_descricao, valor, categoria, forma)
-        if parcelas:
-            return _registrar_parcelado_e_confirmar(uid, forma, categoria, valor, parcelas, descricao)
-        return _registrar_e_confirmar(uid, forma, categoria, valor, descricao, data=data_gasto)
+    # Verificação por IA de TODO gasto antes de gravar (02/10/2026, pedido
+    # do Lucas). Bug que motivou: "credito mercado 30/09 feira 12" gravou
+    # R$30 — o regex leu o dia da data como valor, e 6 lançamentos saíram
+    # errados em sequência. A IA extrai valor/data sozinha; se discordar do
+    # regex (ou achar que nem é gasto), NÃO grava: pergunta antes, com o que
+    # ela entendeu. Concordando, segue direto — 1 chamada de LLM a mais por
+    # gasto, sem ida-e-volta extra. Se a IA cair/demorar (None), segue só
+    # com o regex, como antes: o bot não pode parar de registrar por isso.
+    verificacao = verificar_gasto(mensagem, categorias, formas, valor, data_gasto)
+    if verificacao is not None and (not verificacao["eh_gasto"] or not verificacao["concorda"]):
+        valor_ia   = verificacao["valor"] if verificacao["eh_gasto"] and verificacao["valor"] else valor
+        data_ia    = verificacao["data"] if verificacao["eh_gasto"] else data_gasto
+        cat_prop   = categoria or verificacao["categoria"]
+        forma_prop = forma or verificacao["forma"]
+        return _propor_confirmacao_ia(
+            uid,
+            {
+                "valor": valor_ia,
+                "categoria": cat_prop,
+                "forma": forma_prop,
+                "descricao": limpar_descricao(sem_data if data_gasto else mensagem,
+                                              valor_ia, cat_prop, forma_prop),
+            },
+            parcelas,
+            data=data_ia,
+        )
+
+    # Categoria/forma que a palavra-chave não achou: usa a sugestão que a
+    # verificação acima já trouxe (sem 2ª chamada de LLM); sem verificação
+    # (IA fora do ar), tenta completar_categoria_forma como antes.
+    ia_completou = not (categoria and forma)
 
     # Fase 3.6 estendida (24/07/2026, pedido do Lucas: "IA consiga também
     # alocar gastos pelo entendimento da mensagem") — palavra-chave não
@@ -612,7 +638,12 @@ def _processar_input_livre(uid: int, mensagem: str) -> str:
     # alias, mas é claramente Farmácia). Só chama IA pro que faltou —
     # completar_categoria_forma nunca chama se os dois já foram achados
     # (esse caso já retornou acima).
-    categoria, forma = completar_categoria_forma(mensagem, categorias, formas, categoria, forma)
+    if ia_completou:
+        if verificacao is not None:
+            categoria = categoria or verificacao["categoria"]
+            forma     = forma or verificacao["forma"]
+        else:
+            categoria, forma = completar_categoria_forma(mensagem, categorias, formas, categoria, forma)
 
     # A IA fechou os dois campos que faltavam: registra DIRETO, sem pedir
     # confirmação (revisão de 24/07/2026 — pedido de fluidez do Lucas).
@@ -636,10 +667,10 @@ def _processar_input_livre(uid: int, mensagem: str) -> str:
         descricao = limpar_descricao(mensagem_para_descricao, valor, categoria, forma)
         if parcelas:
             return _registrar_parcelado_e_confirmar(
-                uid, forma, categoria, valor, parcelas, descricao, deduzido_por_ia=True
+                uid, forma, categoria, valor, parcelas, descricao, deduzido_por_ia=ia_completou
             )
         return _registrar_e_confirmar(
-            uid, forma, categoria, valor, descricao, deduzido_por_ia=True, data=data_gasto
+            uid, forma, categoria, valor, descricao, deduzido_por_ia=ia_completou, data=data_gasto
         )
 
     etapa_inicial = "aguardando_categoria" if not categoria else "aguardando_pagamento"
@@ -649,7 +680,8 @@ def _processar_input_livre(uid: int, mensagem: str) -> str:
         valor_temp=valor,
         categoria_temp=categoria["id"] if categoria else None,
         forma_temp=forma["id"] if forma else None,
-        dados_temp={"parcelas": parcelas, "descricao": mensagem},
+        dados_temp={"parcelas": parcelas, "descricao": mensagem,
+                    "data": data_gasto.isoformat() if data_gasto else None},
     )
 
     if not categoria:
@@ -831,7 +863,8 @@ def _responder_soma_categoria(uid: int, categoria: dict, dias: int) -> str:
     )
 
 
-def _propor_confirmacao_ia(uid: int, resultado: dict, parcelas: int | None = None) -> str:
+def _propor_confirmacao_ia(uid: int, resultado: dict, parcelas: int | None = None,
+                           data: date | None = None) -> str:
     valor     = resultado["valor"]
     categoria = resultado.get("categoria")
     forma     = resultado.get("forma")
@@ -843,15 +876,19 @@ def _propor_confirmacao_ia(uid: int, resultado: dict, parcelas: int | None = Non
         valor_temp=valor,
         categoria_temp=categoria["id"] if categoria else None,
         forma_temp=forma["id"] if forma else None,
-        dados_temp={"descricao": descricao, "parcelas": parcelas},
+        dados_temp={
+            "descricao": descricao, "parcelas": parcelas,
+            "data": data.isoformat() if data else None,
+        },
         timeout_minutos=5,
     )
 
     cat_txt      = categoria["nome"] if categoria else "categoria não identificada"
     forma_txt    = forma["nome"] if forma else "forma de pagamento não identificada"
     parcelas_txt = f" em {parcelas}x" if parcelas else ""
+    data_txt     = f" em {data.strftime('%d/%m/%Y')}" if data and data != date.today() else ""
     return (
-        f"🤔 Entendi que pode ser um gasto de {_brl(valor)}{parcelas_txt} — {cat_txt} ({forma_txt}).\n\n"
+        f"🤔 Entendi que pode ser um gasto de {_brl(valor)}{parcelas_txt}{data_txt} — {cat_txt} ({forma_txt}).\n\n"
         "Confirma? Responda *sim* ou *não*."
     )
 
@@ -1058,7 +1095,8 @@ def _processar_sessao(uid: int, sessao: dict, mensagem: str) -> str:
                 return _menu_formas(get_formas_pagamento(uid))
             if parcelas:
                 return _registrar_parcelado_e_confirmar(uid, forma, cat, valor, parcelas, descricao)
-            return _registrar_e_confirmar(uid, forma, cat, valor, descricao)
+            return _registrar_e_confirmar(uid, forma, cat, valor, descricao,
+                                          data=_data_temp(dados))
 
         formas = get_formas_pagamento(uid)
         atualizar_sessao(uid, etapa="aguardando_pagamento", categoria_temp=cat["id"])
@@ -1083,7 +1121,8 @@ def _processar_sessao(uid: int, sessao: dict, mensagem: str) -> str:
 
         if parcelas:
             return _registrar_parcelado_e_confirmar(uid, forma, cat, valor, parcelas, descricao)
-        return _registrar_e_confirmar(uid, forma, cat, valor, descricao)
+        return _registrar_e_confirmar(uid, forma, cat, valor, descricao,
+                                      data=_data_temp(dados))
 
     if etapa == "aguardando_confirmacao_exclusao_parcela":
         return _processar_confirmacao_exclusao_parcela(uid, sessao, mensagem)
@@ -1170,6 +1209,7 @@ def _processar_confirmacao_ia(uid: int, sessao: dict, mensagem: str) -> str:
     dados     = get_dados_temp(sessao)
     descricao = dados.get("descricao", "")
     parcelas  = dados.get("parcelas")
+    data      = _data_temp(dados)
     cat_id    = sessao.get("categoria_temp")
     forma_id  = sessao.get("forma_temp")
 
@@ -1197,7 +1237,7 @@ def _processar_confirmacao_ia(uid: int, sessao: dict, mensagem: str) -> str:
 
     if parcelas:
         return _registrar_parcelado_e_confirmar(uid, forma, categoria, valor, parcelas, descricao)
-    return _registrar_e_confirmar(uid, forma, categoria, valor, descricao)
+    return _registrar_e_confirmar(uid, forma, categoria, valor, descricao, data=data)
 
 
 def _processar_confirmacao_comando(uid: int, sessao: dict, mensagem: str) -> str:
@@ -1241,6 +1281,11 @@ def _processar_confirmacao_comando(uid: int, sessao: dict, mensagem: str) -> str
 # ---------------------------------------------------------------------------
 # Registro e confirmação
 # ---------------------------------------------------------------------------
+
+def _data_temp(dados: dict) -> date | None:
+    """Data do gasto guardada em dados_temp (ISO) durante um fluxo de sessão."""
+    return date.fromisoformat(dados["data"]) if dados.get("data") else None
+
 
 def _registrar_e_confirmar(uid: int, forma: dict, categoria: dict,
                             valor: float, descricao: str,

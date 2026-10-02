@@ -67,3 +67,16 @@ def test_padrao_parcela_no_meio_da_frase_nao_e_data():
 
 def test_texto_vazio_devolve_none():
     assert extrair_data("", hoje=_HOJE) is None
+
+
+# 02/10/2026 — data no MEIO da frase (print do Lucas: "credito mercado 30/09
+# feira 12"). Formato estrito dd/mm com 2 dígitos dos dois lados.
+def test_data_no_meio_da_frase_dd_mm_estrito():
+    assert extrair_data("credito mercado 30/09 feira 12", hoje=_HOJE) == date(2026, 9, 30)
+
+
+def test_data_no_meio_tirada_do_resto():
+    from parser import extrair_data_e_resto
+    data, resto = extrair_data_e_resto("credito mercado 30/09 feira 7,90", hoje=_HOJE)
+    assert data == date(2026, 9, 30)
+    assert resto == "credito mercado feira 7,90"

@@ -184,6 +184,16 @@ def extrair_valor(texto: str) -> float | None:
         if bare_longo_demais:
             continue
 
+        # Pedaço de data ("30/09", "01-08") não é valor. Bug real
+        # (02/10/2026, print do Lucas): "credito mercado 30/09 feira 12"
+        # registrou R$30 — o "30" do dia. Olha o caractere colado no número:
+        # barra/hífen seguido (ou precedido) de dígito = data, pula.
+        ini, fim = m.start(1), m.end(1)
+        colado_depois = texto[fim:fim + 2]
+        colado_antes = texto[max(0, ini - 2):ini]
+        if re.match(r"[-/]\d", colado_depois) or re.fullmatch(r"\d[-/]", colado_antes):
+            continue
+
         resto = texto[m.end():].strip().lower()
         proxima_palavra = resto.split(None, 1)[0].strip(".,!?") if resto else ""
         if proxima_palavra in _UNIDADES_TEMPO:
@@ -213,19 +223,8 @@ def extrair_valor(texto: str) -> float | None:
 _DATA_RE = re.compile(r"^(\d{1,2})[-/.](\d{1,2})(?:[-/.](\d{2,4}))?$")
 
 
-def extrair_data(texto: str, hoje: date | None = None) -> date | None:
-    """
-    Retorna a data explícita no fim da mensagem, ou None (segue com a data
-    default de quem chama — hoje). Rejeita dia/mês fora de faixa (dia>31,
-    mês>12) e combinações que não existem no calendário (31/02).
-    """
-    if not texto:
-        return None
-    tokens = texto.strip().split()
-    if not tokens:
-        return None
-
-    m = _DATA_RE.match(tokens[-1])
+def _token_para_data(token: str, hoje: date | None) -> date | None:
+    m = _DATA_RE.match(token)
     if not m:
         return None
 
@@ -244,6 +243,47 @@ def extrair_data(texto: str, hoje: date | None = None) -> date | None:
         return date(ano, mes, dia)
     except ValueError:
         return None
+
+
+# Data no MEIO da frase (02/10/2026, print do Lucas: "credito mercado 30/09
+# feira 12"). Só aceita o formato estrito dd/mm com 2 dígitos dos dois lados
+# ("30/09", "01-08") — parcela digitada à mão costuma ser "2/12", "3/10",
+# que continua sendo descrição, não data.
+_DATA_MEIO_RE = re.compile(r"^\d{2}[-/.]\d{2}(?:[-/.](?:\d{2}|\d{4}))?$")
+
+
+def extrair_data_e_resto(texto: str, hoje: date | None = None) -> tuple[date | None, str]:
+    """
+    Devolve (data, texto sem o token da data). Sem data: (None, texto).
+    O último token é aceito em qualquer formato de _DATA_RE; um token no meio
+    da frase só no formato estrito de _DATA_MEIO_RE.
+    """
+    if not texto:
+        return None, texto
+    tokens = texto.strip().split()
+    if not tokens:
+        return None, texto
+
+    data = _token_para_data(tokens[-1], hoje)
+    if data:
+        return data, " ".join(tokens[:-1])
+
+    for i, tok in enumerate(tokens[:-1]):
+        if _DATA_MEIO_RE.match(tok):
+            data = _token_para_data(tok, hoje)
+            if data:
+                return data, " ".join(tokens[:i] + tokens[i + 1:])
+
+    return None, texto
+
+
+def extrair_data(texto: str, hoje: date | None = None) -> date | None:
+    """
+    Retorna a data explícita da mensagem, ou None (segue com a data default
+    de quem chama — hoje). Rejeita dia/mês fora de faixa (dia>31, mês>12) e
+    combinações que não existem no calendário (31/02).
+    """
+    return extrair_data_e_resto(texto, hoje)[0]
 
 
 # ---------------------------------------------------------------------------
