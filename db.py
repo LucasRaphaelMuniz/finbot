@@ -4,7 +4,7 @@ import psycopg
 from psycopg.rows import dict_row
 from dotenv import load_dotenv
 
-from services.competencia import calcular_competencia, dia_regra
+from services.competencia import calcular_competencia, dia_regra, somar_meses
 
 load_dotenv()
 
@@ -395,6 +395,54 @@ def editar_ultimo_gasto_valor(usuario_id: int, novo_valor: float) -> bool:
             cur.execute("UPDATE gastos SET valor = %s WHERE id = %s", (novo_valor, row["id"]))
             conn.commit()
             return True
+
+
+def mover_ultimo_gasto_fatura(usuario_id: int, delta: int) -> dict:
+    """
+    Move o último gasto (id DESC, mesma noção de "último" de
+    editar_ultimo_gasto_valor) pra fatura seguinte (delta=+1) ou anterior
+    (delta=-1), sem mexer na data da compra. 02/10/2026, pedido do Lucas:
+    compra perto do fechamento às vezes cai na fatura seguinte no banco
+    (fechamento muda com fim de semana/feriado) e a regra fixa de
+    calcular_competencia não tem como saber.
+
+    Devolve {'erro': 'sem_gasto' | 'nao_cartao' | 'parcela'} ou
+    {'valor', 'categoria_nome', 'forma_nome', 'competencia'} (a nova).
+    Parcela fica de fora: cada parcela tem sua competência encadeada com as
+    outras (services/parcelamento.py), mover uma só desalinharia a compra.
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT g.id, g.valor, g.competencia, g.compra_parcelada_id,
+                          fp.dia_fechamento,
+                          c.nome  AS categoria_nome,
+                          fp.nome AS forma_nome
+                   FROM gastos g
+                   LEFT JOIN categorias c        ON c.id  = g.categoria_id
+                   LEFT JOIN formas_pagamento fp ON fp.id = g.forma_pagamento_id
+                   WHERE g.usuario_id = %s
+                   ORDER BY g.id DESC
+                   LIMIT 1""",
+                (usuario_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return {"erro": "sem_gasto"}
+            if not row["dia_fechamento"]:
+                return {"erro": "nao_cartao"}
+            if row["compra_parcelada_id"]:
+                return {"erro": "parcela"}
+
+            nova = somar_meses(row["competencia"], delta)
+            cur.execute("UPDATE gastos SET competencia = %s WHERE id = %s", (nova, row["id"]))
+            conn.commit()
+            return {
+                "valor": row["valor"],
+                "categoria_nome": row["categoria_nome"],
+                "forma_nome": row["forma_nome"],
+                "competencia": nova,
+            }
 
 
 # ---------------------------------------------------------------------------

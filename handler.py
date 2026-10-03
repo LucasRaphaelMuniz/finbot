@@ -25,6 +25,7 @@ from db import (
     get_soma_gastos_categoria_periodo,
     excluir_gasto_por_id,
     editar_ultimo_gasto_valor,
+    mover_ultimo_gasto_fatura,
     get_grupo,
     get_membros_grupo,
     criar_grupo,
@@ -207,6 +208,10 @@ def _despachar_comando(uid: int, mensagem: str) -> str | None:
         return _cmd_excluir(uid, lower)
     if lower.startswith("editar ultimo"):
         return _cmd_editar_ultimo(uid, lower)
+    if lower in _CMD_PROXIMA_FATURA:
+        return _cmd_mover_fatura(uid, +1)
+    if lower in _CMD_FATURA_ANTERIOR:
+        return _cmd_mover_fatura(uid, -1)
     if lower.startswith("forma "):
         return _cmd_forma(uid, lower)
     if lower.startswith("categoria "):
@@ -247,6 +252,7 @@ _PREFIXOS_NOVA_INTENCAO = (
     "saldo", "resumo", "gastos", "contas", "ajuda", "excluir", "editar ultimo",
     "forma ", "categoria ", "fixa ", "entrada ", "apelido ",
     "vincular ", "grupo", "limite ", "desfazer", "desfaz",
+    "proxima fatura", "próxima fatura", "fatura anterior",
 )
 
 
@@ -516,7 +522,8 @@ def _bloco_tutorial_completo() -> str:
         "• *gastos* — últimos 5 gastos\n"
         "• *resumo* — gastos, entradas e saldo do mês\n"
         "• *excluir ultimo* — remove o último gasto (parcela pergunta antes)\n"
-        "• *editar ultimo 45,90* — corrige o valor do último\n\n"
+        "• *editar ultimo 45,90* — corrige o valor do último\n"
+        "• *próxima fatura* / *fatura anterior* — move o último gasto do cartão de fatura\n\n"
         "ℹ️ *ajuda* — todos os comandos"
     )
 
@@ -1295,7 +1302,7 @@ def _registrar_e_confirmar(uid: int, forma: dict, categoria: dict,
     nome     = usuario.get("nome") or usuario.get("telefone", "")
     grupo_id = usuario.get("grupo_id")
 
-    registrar_gasto(
+    gasto = registrar_gasto(
         uid, forma["id"], categoria["id"], valor, descricao,
         grupo_id=grupo_id, dia_fechamento=forma.get("dia_fechamento"), data=data,
     )
@@ -1341,6 +1348,12 @@ def _registrar_e_confirmar(uid: int, forma: dict, categoria: dict,
             linhas.append(f"⚠️ Já foi usado {pct:.0f}% do limite do {forma_nome}!")
     else:
         linhas.append(f"Total: {_brl(gasto_mes)} gastos este mês")
+
+    aviso = _aviso_perto_fechamento(data or date.today(), forma.get("dia_fechamento"),
+                                    gasto.get("competencia") if gasto else None)
+    if aviso:
+        linhas.append("")
+        linhas.append(aviso)
 
     if deduzido_por_ia:
         linhas.append("")
@@ -1642,6 +1655,56 @@ def _cmd_editar_ultimo(uid: int, lower: str) -> str:
     if editar_ultimo_gasto_valor(uid, novo_valor):
         return f"✅ Último gasto atualizado para {_brl(novo_valor)}"
     return "❌ Nenhum gasto registrado para editar."
+
+
+# ---------------------------------------------------------------------------
+# Fatura do último gasto (02/10/2026, pedido do Lucas)
+#
+# O dia de fechamento do cartão não é fixo na prática — o banco desloca
+# conforme fim de semana/feriado, e não dá pra saber a regra de cada banco.
+# Em vez de adivinhar, calcular_competencia segue com a regra fixa, a
+# confirmação avisa quando a compra cai perto do fechamento, e estes
+# comandos movem o último gasto de fatura sem mexer na data da compra.
+# ---------------------------------------------------------------------------
+
+_CMD_PROXIMA_FATURA = {
+    "proxima fatura", "próxima fatura", "fatura seguinte",
+    "mover pra proxima fatura", "mover para proxima fatura",
+    "mover pra próxima fatura", "mover para próxima fatura",
+}
+_CMD_FATURA_ANTERIOR = {"fatura anterior", "mover pra fatura anterior", "mover para fatura anterior"}
+
+# Quantos dias antes/depois do fechamento a confirmação avisa.
+_JANELA_AVISO_FECHAMENTO = 2
+
+
+def _aviso_perto_fechamento(data_compra: date, dia_fechamento: int | None,
+                            competencia: date | None) -> str | None:
+    if not dia_fechamento or not competencia:
+        return None
+    if abs(data_compra.day - dia_fechamento) > _JANELA_AVISO_FECHAMENTO:
+        return None
+    fatura = formatar_competencia(competencia)
+    if (competencia.year, competencia.month) == (data_compra.year, data_compra.month):
+        return (f"⚠️ _Perto do fechamento — entrou na fatura de *{fatura}*. "
+                f"Se no banco cair na próxima, mande *próxima fatura*._")
+    return (f"⚠️ _Perto do fechamento — entrou na fatura de *{fatura}*. "
+            f"Se no banco cair na anterior, mande *fatura anterior*._")
+
+
+def _cmd_mover_fatura(uid: int, delta: int) -> str:
+    r = mover_ultimo_gasto_fatura(uid, delta)
+    erro = r.get("erro")
+    if erro == "sem_gasto":
+        return "❌ Nenhum gasto registrado para mover."
+    if erro == "nao_cartao":
+        return "❌ O último gasto não é de cartão — só gasto no cartão tem fatura."
+    if erro == "parcela":
+        return "❌ O último gasto é uma parcela — compra parcelada não pode mudar de fatura por aqui."
+    return (
+        f"✅ Movido para a fatura de *{formatar_competencia(r['competencia'])}*: "
+        f"{_brl(float(r['valor']))} — {r.get('categoria_nome') or '?'} — {r.get('forma_nome') or '?'}"
+    )
 
 
 # ---------------------------------------------------------------------------
