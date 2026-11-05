@@ -6,25 +6,46 @@
 // fechar o gap, já que o backend (routes/fixas.py, Fase 4.3) já suporta.
 // "Remover" é soft-delete (ativa=FALSE) — mesma razão do bot: gastos já
 // lançados referenciam despesa_fixa_id sem cascade.
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { Plus } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import api from "@/services/api";
 import { brl } from "@/utils/format";
-import DataTable from "@/components/DataTable";
-import { AcaoBtn } from "@/components/DataTable/styles";
-import Modal from "@/components/Modal";
+import { categoriaVisual } from "@/utils/categoriaVisual";
+import Painel from "@/components/Painel";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import MoneyInput from "@/components/MoneyInput";
 import CategoriaSelect from "@/components/CategoriaSelect";
 import FormaSelect from "@/components/FormaSelect";
 import Toast from "@/components/Toast";
-import { Field, Botao as SalvarBtn } from "@/components/AuthCard/styles";
+import { Field } from "@/components/AuthCard/styles";
+import {
+  Header, Titulo, Subtitulo, NovoBtn, Resumo, ResumoItem, Lista, Linha, LinhaBtn, DiaBadge,
+  Avatar, LinhaTexto, LinhaTitulo, LinhaMeta, Progresso, ProgressoCheio, Valor, ValorNovo,
+  Vazio, SkeletonLinha, Form, Erro, SalvarBtn, RemoverBtn,
+} from "./styles";
 
+// Redesign 05/11/2026 (fase 3): de tabela para lista ordenada pelo dia do
+// mês — é a ordem em que as contas caem, como um calendário. Cada linha
+// mostra o dia em destaque, categoria/forma por nome (a API de fixas só
+// devolve os ids) e, nas fixas com prazo, uma barra de quanto já foi
+// lançado. Criar/editar abre o painel lateral (components/Painel), com
+// "Remover" no rodapé em vez de um botão em cada linha.
 export default function FixasPage() {
   const { dados, loading, refetch } = useApi("/fixas");
+  const { dados: categorias } = useApi("/categorias");
+  const { dados: formas } = useApi("/formas");
   const [toast, setToast] = useState(null);
-  const [modalFixa, setModalFixa] = useState(undefined);
+  // undefined = painel fechado; null = nova; objeto = editando
+  const [painelFixa, setPainelFixa] = useState(undefined);
   const [removendo, setRemovendo] = useState(null);
+
+  const nomeCategoria = useMemo(() => mapaNomes(categorias), [categorias]);
+  const nomeForma = useMemo(() => mapaNomes(formas), [formas]);
+
+  const itens = dados?.itens || [];
+  const total = itens.reduce((soma, f) => soma + Number(f.valor || 0), 0);
+  const comPrazo = itens.filter((f) => f.parcelas_total).length;
 
   function avisar(mensagem, tipo = "sucesso") {
     setToast({ mensagem, tipo });
@@ -36,68 +57,116 @@ export default function FixasPage() {
       await api.delete(`/fixas/${removendo.id}`);
       avisar("Despesa fixa removida (não lança mais).");
       setRemovendo(null);
-      refetch();
+      refetch({ silent: true });
     } catch (err) {
       avisar(err?.response?.data?.mensagem || "Não foi possível remover.", "erro");
     }
   }
 
+  // Remover sai do painel: fecha o painel antes de abrir a confirmação
+  // (mesmo motivo de Lançamentos — dois diálogos brigariam pelo Esc).
+  function pedirRemocao(f) {
+    setPainelFixa(undefined);
+    setRemovendo(f);
+  }
+
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 24 }}>
-        <h1 style={{ fontSize: 20 }}>Despesas fixas</h1>
-        <SalvarBtn type="button" style={{ padding: "10px 16px" }} onClick={() => setModalFixa(null)}>+ Nova despesa fixa</SalvarBtn>
-      </div>
+      <Header>
+        <div>
+          <Titulo>Despesas fixas</Titulo>
+          <Subtitulo>Lançadas sozinhas todo mês, no dia marcado.</Subtitulo>
+        </div>
+        <NovoBtn type="button" onClick={() => setPainelFixa(null)}>
+          <Plus size={16} aria-hidden="true" /> Nova despesa fixa
+        </NovoBtn>
+      </Header>
 
-      <DataTable
-        columns={[
-          { key: "descricao", label: "Descrição" },
-          {
-            key: "valor", label: "Valor", numerico: true,
-            render: (f) => (
-              <>
-                {brl(f.valor)}
-                {f.valor_pendente != null && (
-                  <div style={{ fontSize: 12, opacity: 0.7 }}>
-                    {brl(f.valor_pendente)} a partir do próximo lançamento
-                  </div>
-                )}
-              </>
-            ),
-          },
-          { key: "dia_lancamento", label: "Todo dia" },
-          {
-            key: "parcelas_total",
-            label: "Prazo",
-            render: (f) =>
-              f.parcelas_total
-                ? `${f.lancadas ?? 0}/${f.parcelas_total} lançadas`
-                : "sem fim",
-          },
-        ]}
-        rows={dados?.itens}
-        loading={loading}
-        vazio={{ titulo: "Nenhuma despesa fixa cadastrada", descricao: "Ex: aluguel, assinaturas, mensalidades." }}
-        acoes={(f) => (
-          <>
-            <AcaoBtn onClick={() => setModalFixa(f)}>Editar</AcaoBtn>
-            <AcaoBtn $perigo onClick={() => setRemovendo(f)}>Remover</AcaoBtn>
-          </>
+      {itens.length > 0 && (
+        <Resumo aria-label="Totais">
+          <ResumoItem>
+            <span>Por mês</span>
+            <strong>{brl(total)}</strong>
+          </ResumoItem>
+          <ResumoItem>
+            <span>Despesas</span>
+            <strong>{itens.length}</strong>
+          </ResumoItem>
+          {comPrazo > 0 && (
+            <ResumoItem>
+              <span>Com prazo</span>
+              <strong>{comPrazo}</strong>
+            </ResumoItem>
+          )}
+        </Resumo>
+      )}
+
+      <Lista aria-busy={loading || undefined}>
+        {loading && !dados ? (
+          [0, 1, 2, 3].map((i) => <SkeletonLinha key={i} />)
+        ) : itens.length === 0 ? (
+          <Vazio>
+            <strong>Nenhuma despesa fixa cadastrada.</strong>
+            <span>Aluguel, assinaturas, mensalidades: cadastre uma vez e o finbot lança todo mês.</span>
+          </Vazio>
+        ) : (
+          <ul>
+            {itens.map((f) => {
+              const categoria = nomeCategoria.get(f.categoria_id);
+              const visual = categoriaVisual(categoria || f.descricao);
+              const pct = f.parcelas_total
+                ? Math.min(100, ((f.lancadas ?? 0) / f.parcelas_total) * 100)
+                : null;
+              return (
+                <Linha key={f.id}>
+                  <LinhaBtn type="button" onClick={() => setPainelFixa(f)}>
+                    <DiaBadge>
+                      <small>dia</small>
+                      <span>{f.dia_lancamento}</span>
+                    </DiaBadge>
+                    <Avatar style={{ background: visual.fundo, color: visual.cor }} aria-hidden="true">
+                      <visual.Icone size={18} strokeWidth={2} />
+                    </Avatar>
+                    <LinhaTexto>
+                      <LinhaTitulo>{f.descricao}</LinhaTitulo>
+                      <LinhaMeta>
+                        {[
+                          categoria,
+                          nomeForma.get(f.forma_pagamento_id),
+                          f.parcelas_total ? `${f.lancadas ?? 0}/${f.parcelas_total} lançadas` : "sem fim",
+                        ].filter(Boolean).join(" · ")}
+                      </LinhaMeta>
+                      {pct != null && (
+                        <Progresso aria-hidden="true">
+                          <ProgressoCheio style={{ width: `${pct}%` }} />
+                        </Progresso>
+                      )}
+                    </LinhaTexto>
+                    <Valor>
+                      {brl(f.valor)}
+                      {f.valor_pendente != null && (
+                        <ValorNovo>{brl(f.valor_pendente)} a partir do próximo</ValorNovo>
+                      )}
+                    </Valor>
+                  </LinhaBtn>
+                </Linha>
+              );
+            })}
+          </ul>
         )}
-      />
+      </Lista>
 
-      {modalFixa !== undefined && (
-        <Modal aberto titulo={modalFixa ? "Editar despesa fixa" : "Nova despesa fixa"} onFechar={() => setModalFixa(undefined)}>
-          <FormFixa
-            fixa={modalFixa}
-            onSalvo={() => {
-              setModalFixa(undefined);
-              avisar(modalFixa ? "Despesa fixa atualizada." : "Despesa fixa criada.");
-              refetch();
-            }}
-            onErro={(msg) => avisar(msg, "erro")}
-          />
-        </Modal>
+      {painelFixa !== undefined && (
+        <PainelFixa
+          fixa={painelFixa}
+          onFechar={() => setPainelFixa(undefined)}
+          onRemover={() => pedirRemocao(painelFixa)}
+          onSalvo={() => {
+            avisar(painelFixa ? "Despesa fixa atualizada." : "Despesa fixa criada.");
+            setPainelFixa(undefined);
+            refetch({ silent: true });
+          }}
+        />
       )}
 
       <ConfirmDialog
@@ -114,13 +183,39 @@ export default function FixasPage() {
   );
 }
 
+function mapaNomes(dados) {
+  const lista = Array.isArray(dados) ? dados : dados?.itens || [];
+  return new Map(lista.map((x) => [x.id, x.nome]));
+}
+
+function PainelFixa({ fixa, onFechar, onRemover, onSalvo }) {
+  return (
+    <Painel
+      aberto
+      titulo={fixa ? fixa.descricao : "Nova despesa fixa"}
+      subtitulo={fixa ? `Lança todo dia ${fixa.dia_lancamento}` : "Lançada sozinha todo mês"}
+      onFechar={onFechar}
+      rodape={
+        <>
+          {fixa && <RemoverBtn type="button" onClick={onRemover}>Remover</RemoverBtn>}
+          <SalvarBtn type="submit" form="form-fixa">
+            {fixa ? "Salvar alterações" : "Criar despesa fixa"}
+          </SalvarBtn>
+        </>
+      }
+    >
+      <FormFixa fixa={fixa} onSalvo={onSalvo} />
+    </Painel>
+  );
+}
+
 // Réplica em JS do truque de _dia_efetivo() no backend (services/despesas_fixas.py):
 // dia_lancamento=31 num mês de 30 dias cai no último dia do mês, não "nunca lança".
 function ultimoDiaDoMes(ano, mesUmIndexado) {
   return new Date(ano, mesUmIndexado, 0).getDate();
 }
 
-function FormFixa({ fixa, onSalvo, onErro }) {
+function FormFixa({ fixa, onSalvo }) {
   const [descricao, setDescricao] = useState(fixa?.descricao || "");
   const [valor, setValor] = useState(fixa?.valor || 0);
   const [dia, setDia] = useState(fixa?.dia_lancamento || "");
@@ -166,17 +261,17 @@ function FormFixa({ fixa, onSalvo, onErro }) {
       }
       onSalvo();
     } catch (err) {
-      onErro(err?.response?.data?.mensagem || "Não foi possível salvar.");
+      setErro(err?.response?.data?.mensagem || "Não foi possível salvar.");
     } finally {
       setEnviando(false);
     }
   }
 
   return (
-    <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 300 }}>
+    <Form id="form-fixa" onSubmit={handleSubmit} aria-busy={enviando || undefined}>
       <Field>
         <label htmlFor="descricao-fixa">Descrição</label>
-        <input id="descricao-fixa" value={descricao} onChange={(e) => setDescricao(e.target.value)} />
+        <input id="descricao-fixa" data-autofocus value={descricao} onChange={(e) => setDescricao(e.target.value)} />
       </Field>
       <Field>
         <label htmlFor="valor-fixa">Valor</label>
@@ -227,8 +322,7 @@ function FormFixa({ fixa, onSalvo, onErro }) {
           </label>
         </Field>
       )}
-      {erro && <div style={{ color: "#f2545b", fontSize: 13 }}>{erro}</div>}
-      <SalvarBtn type="submit" disabled={enviando}>{enviando ? "Salvando..." : "Salvar"}</SalvarBtn>
-    </form>
+      {erro && <Erro role="alert">{erro}</Erro>}
+    </Form>
   );
 }

@@ -19,7 +19,7 @@ import Link from "next/link";
 import { ArrowRight, CircleAlert, CircleCheck, TrendingUp } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { brl, formatarCompetencia, formatarDataBR } from "@/utils/format";
-import { mesAtualISO, diasAte, rotuloDia } from "@/utils/datas";
+import { mesAtualISO, diasAte, rotuloDia, textoPrazo } from "@/utils/datas";
 import { categoriaVisual, CORES_CATEGORIA, COR_ENTRADA } from "@/utils/categoriaVisual";
 import ChartComparativo from "@/components/ChartComparativo";
 import MesPicker from "@/components/MesPicker";
@@ -37,15 +37,6 @@ import {
 
 function nomeMes(mes) {
   return formatarCompetencia(`${mes}-01`).split("/")[0].toLowerCase();
-}
-
-function textoPrazo(dias, iso) {
-  if (dias == null) return { texto: "sem data", tom: "neutro" };
-  if (dias < 0) return { texto: dias === -1 ? "venceu ontem" : `venceu há ${-dias} dias`, tom: "perigo" };
-  if (dias === 0) return { texto: "vence hoje", tom: "alerta" };
-  if (dias === 1) return { texto: "vence amanhã", tom: "alerta" };
-  if (dias <= 7) return { texto: `em ${dias} dias`, tom: "neutro" };
-  return { texto: `dia ${iso.slice(8, 10)}`, tom: "neutro" };
 }
 
 // Recarrega os blocos quando o modal global de novo lançamento salva algo.
