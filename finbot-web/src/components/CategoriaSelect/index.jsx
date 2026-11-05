@@ -12,7 +12,8 @@ import { Select } from "./styles";
 // de propósito — lá a categoria precisa continuar aparecendo mesmo
 // desativada (senão fica impossível reativar ou filtrar gastos antigos
 // que já usam ela).
-export default function CategoriaSelect({ value, onChange, incluirTodas = false, apenasAtivas = true, id }) {
+// `...rest` repassa aria-label/aria-invalid/aria-describedby pro <select>.
+export default function CategoriaSelect({ value, onChange, incluirTodas = false, apenasAtivas = true, id, ...rest }) {
   const { dados, loading } = useApi("/categorias");
   const todos = dados?.itens || [];
   // `|| c.id === value` é de propósito: sem isso, editar um gasto antigo
@@ -27,6 +28,7 @@ export default function CategoriaSelect({ value, onChange, incluirTodas = false,
       value={value ?? ""}
       onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
       disabled={loading}
+      {...rest}
     >
       {incluirTodas && <option value="">Todas as categorias</option>}
       {!incluirTodas && <option value="" disabled>Selecione...</option>}

@@ -75,26 +75,29 @@ export default function CadastroPage() {
       <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         <Field>
           <label htmlFor="nome">Seu nome</label>
-          <input id="nome" required value={nome} onChange={(e) => setNome(e.target.value)} />
+          <input id="nome" autoComplete="name" required value={nome} onChange={(e) => setNome(e.target.value)} />
         </Field>
         <Field>
           <label htmlFor="email">E-mail</label>
-          <input id="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+          <input id="email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
         </Field>
         <Field>
           <label htmlFor="senha">Senha</label>
           <input
             id="senha"
             type="password"
+            autoComplete="new-password"
+            aria-describedby="senha-ajuda"
             required
             minLength={6}
             value={senha}
             onChange={(e) => setSenha(e.target.value)}
           />
+          <small id="senha-ajuda" style={{ fontSize: 12, opacity: 0.7 }}>Mínimo de 6 caracteres.</small>
         </Field>
         <Field>
           <label htmlFor="whatsapp">Seu WhatsApp (opcional)</label>
-          <TelefoneInput id="whatsapp" value={whatsapp} onChange={setWhatsapp} />
+          <TelefoneInput id="whatsapp" autoComplete="tel-national" value={whatsapp} onChange={setWhatsapp} />
           <small style={{ fontSize: 12, opacity: 0.7 }}>
             Informe agora pra pular esse passo depois — de qualquer forma,
             vamos confirmar por código enviado pelo WhatsApp.
@@ -104,6 +107,7 @@ export default function CadastroPage() {
           <label htmlFor="convite">Código de convite (opcional)</label>
           <input
             id="convite"
+            autoComplete="off"
             placeholder="FIN-8K3M2P"
             value={codigoConvite}
             onChange={(e) => setCodigoConvite(e.target.value)}

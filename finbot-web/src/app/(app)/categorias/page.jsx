@@ -52,7 +52,7 @@ export default function CategoriasPage() {
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 24 }}>
         <h1 style={{ fontSize: 20 }}>Categorias</h1>
-        <button onClick={() => setModalCategoria(null)}>+ Nova categoria</button>
+        <SalvarBtn type="button" style={{ padding: "10px 16px" }} onClick={() => setModalCategoria(null)}>+ Nova categoria</SalvarBtn>
       </div>
 
       <DataTable
@@ -64,12 +64,17 @@ export default function CategoriasPage() {
           {
             key: "ativo", label: "Ativa",
             render: (c) => (
+              // label com padding/margem negativa: alvo de toque de ~40px
+              // sem mudar a altura visual da linha (checkbox tem 16px).
+              <label style={{ display: "inline-flex", padding: 12, margin: -12, cursor: "pointer" }}>
               <input
                 type="checkbox"
                 checked={c.ativo}
                 onChange={() => alternarAtivo(c)}
+                aria-label={`${c.nome} ativa`}
                 title={c.ativo ? "Desativar (some do seletor de novo gasto)" : "Ativar"}
               />
+              </label>
             ),
           },
         ]}
@@ -103,6 +108,7 @@ export default function CategoriasPage() {
       <ConfirmDialog
         aberto={!!removendo}
         titulo="Remover categoria"
+        textoConfirmar="Remover categoria"
         mensagem={`Remover "${removendo?.nome}"? Gastos já registrados com ela não são apagados.`}
         onConfirmar={remover}
         onCancelar={() => setRemovendo(null)}

@@ -31,11 +31,11 @@ export default function LoginPage() {
       <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         <Field>
           <label htmlFor="email">E-mail</label>
-          <input id="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+          <input id="email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
         </Field>
         <Field>
           <label htmlFor="senha">Senha</label>
-          <input id="senha" type="password" required value={senha} onChange={(e) => setSenha(e.target.value)} />
+          <input id="senha" type="password" autoComplete="current-password" required value={senha} onChange={(e) => setSenha(e.target.value)} />
         </Field>
         {erro && <Mensagem $tipo="erro">{erro}</Mensagem>}
         <Botao type="submit" disabled={enviando}>

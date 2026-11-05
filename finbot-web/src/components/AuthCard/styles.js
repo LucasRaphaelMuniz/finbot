@@ -46,12 +46,14 @@ export const Field = styled.div`
     &:focus {
       outline: none;
       border-color: ${({ theme }) => theme.colors.primary};
+      /* anel de foco: só a borda de 1px mudando de cor era sutil demais */
+      box-shadow: 0 0 0 3px ${({ theme }) => theme.colors.primary}59;
     }
   }
 `;
 
 export const Botao = styled.button`
-  background: ${({ theme }) => theme.colors.primary};
+  background: ${({ theme }) => theme.colors.primarySolid};
   color: white;
   border: none;
   border-radius: ${({ theme }) => theme.radius.sm};

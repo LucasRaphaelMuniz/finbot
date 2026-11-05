@@ -43,13 +43,13 @@ export default function FormasPage() {
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 24 }}>
         <h1 style={{ fontSize: 20 }}>Formas de pagamento</h1>
-        <button onClick={() => setModalForma(null)}>+ Nova forma</button>
+        <SalvarBtn type="button" style={{ padding: "10px 16px" }} onClick={() => setModalForma(null)}>+ Nova forma</SalvarBtn>
       </div>
 
       <DataTable
         columns={[
           { key: "nome", label: "Nome" },
-          { key: "limite_mensal", label: "Limite mensal", render: (f) => f.limite_mensal ? brl(f.limite_mensal) : "Sem limite" },
+          { key: "limite_mensal", label: "Limite mensal", numerico: true, render: (f) => f.limite_mensal ? brl(f.limite_mensal) : "Sem limite" },
           { key: "dia_fechamento", label: "Dia de fechamento", render: (f) => f.dia_fechamento || "—" },
           { key: "dia_vencimento", label: "Dia de vencimento", render: (f) => f.dia_vencimento || "—" },
         ]}
@@ -88,6 +88,7 @@ export default function FormasPage() {
       <ConfirmDialog
         aberto={!!removendo}
         titulo="Remover forma de pagamento"
+        textoConfirmar="Remover forma"
         mensagem={`Remover "${removendo?.nome}"? Gastos já registrados com ela não são apagados.`}
         onConfirmar={remover}
         onCancelar={() => setRemovendo(null)}

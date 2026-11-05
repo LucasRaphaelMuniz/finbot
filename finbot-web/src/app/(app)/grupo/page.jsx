@@ -13,7 +13,8 @@ import ConfirmDialog from "@/components/ConfirmDialog";
 import Toast from "@/components/Toast";
 import { Field, Botao as BotaoAuth } from "@/components/AuthCard/styles";
 import TelefoneInput from "@/components/TelefoneInput";
-import { Secao, SecaoHeader, Titulo, NomeGrupoForm, InputInline, Botao, CodigoBox } from "./styles";
+import { Secao, SecaoHeader, Titulo, NomeGrupoForm, InputInline, Botao, CodigoBox, CampoTelefone, ErroCampo } from "./styles";
+import { formatarTelefoneExibicao } from "@/utils/format";
 
 export default function GrupoPage() {
   const { dados: grupo, loading, refetch } = useApi("/grupo");
@@ -26,6 +27,16 @@ export default function GrupoPage() {
   const [ultimoConvite, setUltimoConvite] = useState(null);
   const [telefoneNovoMembro, setTelefoneNovoMembro] = useState("");
   const [adicionandoMembro, setAdicionandoMembro] = useState(false);
+  // Erro inline do telefone (auditoria de UX): o botão ficava desabilitado
+  // até digitar algo, sem explicar por quê. Agora o botão está sempre
+  // ativo; validação no blur/submit, e o erro some ao editar o campo.
+  const [erroTelefone, setErroTelefone] = useState("");
+
+  function validarTelefone(valor) {
+    if (!valor) return "Informe o telefone com DDD.";
+    if (valor.length < 10) return "Telefone incompleto: use DDD + número (10 ou 11 dígitos).";
+    return "";
+  }
 
   function avisar(mensagem, tipo = "sucesso") {
     setToast({ mensagem, tipo });
@@ -34,7 +45,9 @@ export default function GrupoPage() {
 
   async function adicionarMembroPorTelefone(e) {
     e.preventDefault();
-    if (!telefoneNovoMembro) return;
+    const erro = validarTelefone(telefoneNovoMembro);
+    setErroTelefone(erro);
+    if (erro) return;
     setAdicionandoMembro(true);
     try {
       // Equivalente web do comando "grupo add 44912345678" do bot — mesmo
@@ -95,17 +108,19 @@ export default function GrupoPage() {
 
   return (
     <div>
+      <h1 style={{ fontSize: 20, marginBottom: 16 }}>Grupo</h1>
       <Secao>
         <SecaoHeader>
-          <Titulo>Grupo</Titulo>
+          <Titulo id="titulo-nome-grupo">Nome do grupo</Titulo>
         </SecaoHeader>
         {!loading && grupo && (
           <NomeGrupoForm onSubmit={salvarNomeGrupo}>
             <InputInline
+              aria-labelledby="titulo-nome-grupo"
               value={nomeGrupo ?? grupo.nome}
               onChange={(e) => setNomeGrupo(e.target.value)}
             />
-            <Botao type="submit">Salvar</Botao>
+            <Botao type="submit">Salvar nome</Botao>
           </NomeGrupoForm>
         )}
       </Secao>
@@ -115,23 +130,34 @@ export default function GrupoPage() {
           <Titulo>Membros</Titulo>
         </SecaoHeader>
 
-        <NomeGrupoForm onSubmit={adicionarMembroPorTelefone} style={{ marginBottom: 20 }}>
-          <div style={{ flex: 1 }}>
-            <TelefoneInput
-              value={telefoneNovoMembro}
-              onChange={setTelefoneNovoMembro}
-              placeholder="Ex: 44912345678"
-            />
-          </div>
-          <Botao type="submit" disabled={adicionandoMembro || !telefoneNovoMembro}>
-            {adicionandoMembro ? "Adicionando..." : "+ Adicionar membro"}
-          </Botao>
-        </NomeGrupoForm>
+        <CampoTelefone>
+          <label htmlFor="telefone-novo-membro">Adicionar por WhatsApp (DDD + número)</label>
+          <NomeGrupoForm onSubmit={adicionarMembroPorTelefone} noValidate>
+            <div style={{ flex: "1 1 200px" }}>
+              <TelefoneInput
+                id="telefone-novo-membro"
+                value={telefoneNovoMembro}
+                onChange={(v) => {
+                  setTelefoneNovoMembro(v);
+                  if (erroTelefone) setErroTelefone("");
+                }}
+                onBlur={() => telefoneNovoMembro && setErroTelefone(validarTelefone(telefoneNovoMembro))}
+                placeholder="44912345678"
+                aria-invalid={!!erroTelefone}
+                aria-describedby={erroTelefone ? "erro-telefone-novo-membro" : undefined}
+              />
+            </div>
+            <Botao type="submit" disabled={adicionandoMembro}>
+              {adicionandoMembro ? "Adicionando..." : "Adicionar membro"}
+            </Botao>
+          </NomeGrupoForm>
+          {erroTelefone && <ErroCampo id="erro-telefone-novo-membro">{erroTelefone}</ErroCampo>}
+        </CampoTelefone>
 
         <DataTable
           columns={[
             { key: "nome", label: "Nome" },
-            { key: "telefone", label: "Telefone", render: (m) => m.telefone?.replace("@s.whatsapp.net", "") },
+            { key: "telefone", label: "Telefone", render: (m) => formatarTelefoneExibicao(m.telefone) },
             { key: "conta_web", label: "Conta web?", render: (m) => (m.auth_user_id ? "Sim" : "Não") },
           ]}
           rows={grupo?.membros}
@@ -206,6 +232,7 @@ export default function GrupoPage() {
       <ConfirmDialog
         aberto={!!membroRemovendo}
         titulo="Remover membro"
+        textoConfirmar="Remover membro"
         mensagem={`Remover ${membroRemovendo?.nome} do grupo? A pessoa volta a ter uma conta individual.`}
         onConfirmar={removerMembro}
         onCancelar={() => setMembroRemovendo(null)}

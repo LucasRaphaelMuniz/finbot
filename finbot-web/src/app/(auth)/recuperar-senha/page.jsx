@@ -32,7 +32,7 @@ export default function RecuperarSenhaPage() {
       <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         <Field>
           <label htmlFor="email">E-mail</label>
-          <input id="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+          <input id="email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
         </Field>
         {mensagem && <Mensagem>{mensagem}</Mensagem>}
         {erro && <Mensagem $tipo="erro">{erro}</Mensagem>}

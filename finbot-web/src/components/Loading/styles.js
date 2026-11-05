@@ -12,4 +12,8 @@ export const Spinner = styled.div`
   border-radius: 50%;
   animation: ${spin} 0.7s linear infinite;
   margin: ${({ theme }) => theme.spacing(8)} auto;
+
+  @media (prefers-reduced-motion: reduce) {
+    animation-duration: 2s;
+  }
 `;

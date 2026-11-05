@@ -52,8 +52,8 @@ export default function ParcelasPage() {
             label: "Faltam",
             render: (c) => `${c.parcelas_restantes} de ${c.parcelas}`,
           },
-          { key: "valor_restante", label: "Valor a vencer", render: (c) => brl(c.valor_restante) },
-          { key: "valor_total", label: "Total da compra", render: (c) => brl(c.valor_total) },
+          { key: "valor_restante", label: "Valor a vencer", numerico: true, render: (c) => brl(c.valor_restante) },
+          { key: "valor_total", label: "Total da compra", numerico: true, render: (c) => brl(c.valor_total) },
           {
             key: "proxima_competencia",
             label: "Próxima",

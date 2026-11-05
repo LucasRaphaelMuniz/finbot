@@ -43,13 +43,14 @@ export default function RedefinirSenhaPage() {
       <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         <Field>
           <label htmlFor="senha">Nova senha</label>
-          <input id="senha" type="password" required value={senha} onChange={(e) => setSenha(e.target.value)} />
+          <input id="senha" type="password" autoComplete="new-password" required value={senha} onChange={(e) => setSenha(e.target.value)} />
         </Field>
         <Field>
           <label htmlFor="confirmacao">Confirme a nova senha</label>
           <input
             id="confirmacao"
             type="password"
+            autoComplete="new-password"
             required
             value={confirmacao}
             onChange={(e) => setConfirmacao(e.target.value)}

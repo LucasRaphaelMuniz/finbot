@@ -33,7 +33,11 @@ export const Nav = styled.nav`
     inset: 0 auto 0 0;
     z-index: 100;
     transform: translateX(${({ $aberta }) => ($aberta ? "0" : "-100%")});
-    transition: transform 0.2s ease;
+    transition: transform 0.2s ease-out;
+  }
+
+  @media (max-width: 860px) and (prefers-reduced-motion: reduce) {
+    transition: none;
   }
 `;
 
@@ -49,6 +53,12 @@ export const ItemLink = styled.a`
   color: ${({ theme, $ativo }) => ($ativo ? theme.colors.text : theme.colors.textMuted)};
   background: ${({ theme, $ativo }) => ($ativo ? theme.colors.surfaceAlt : "transparent")};
   font-size: 14px;
+  /* alvo de toque de 44px na gaveta do celular */
+  @media (max-width: 860px) {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+  }
 
   &:hover {
     background: ${({ theme }) => theme.colors.surfaceAlt};

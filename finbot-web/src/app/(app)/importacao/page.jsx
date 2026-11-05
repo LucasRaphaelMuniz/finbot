@@ -16,7 +16,8 @@ import FormaSelect from "@/components/FormaSelect";
 import CategoriaSelect from "@/components/CategoriaSelect";
 import Toast from "@/components/Toast";
 import Loading from "@/components/Loading";
-import { Card, AvisoDuplicata } from "./styles";
+import { Botao } from "@/components/AuthCard/styles";
+import { Card, AvisoDuplicata, Campo, InputArquivo, ErroCampo } from "./styles";
 
 export default function ImportacaoPage() {
   const [formaId, setFormaId] = useState(null);
@@ -26,6 +27,9 @@ export default function ImportacaoPage() {
   const [confirmando, setConfirmando] = useState(false);
   const [importacaoConcluida, setImportacaoConcluida] = useState(null);
   const [toast, setToast] = useState(null);
+  // Erros por campo (auditoria de UX) — antes um toast genérico "Selecione
+  // o arquivo e a forma" sumia em 4s sem apontar qual campo faltava.
+  const [erros, setErros] = useState({});
 
   function avisar(mensagem, tipo = "sucesso") {
     setToast({ mensagem, tipo });
@@ -34,10 +38,11 @@ export default function ImportacaoPage() {
 
   async function handleUpload(e) {
     e.preventDefault();
-    if (!arquivo || !formaId) {
-      avisar("Selecione o arquivo e a forma de pagamento.", "erro");
-      return;
-    }
+    const novosErros = {};
+    if (!arquivo) novosErros.arquivo = "Escolha o arquivo da fatura (PDF ou CSV).";
+    if (!formaId) novosErros.forma = "Escolha a forma de pagamento da fatura.";
+    setErros(novosErros);
+    if (Object.keys(novosErros).length > 0) return;
     setEnviando(true);
     try {
       const formData = new FormData();
@@ -115,22 +120,38 @@ export default function ImportacaoPage() {
         </Card>
       ) : !preview ? (
         <Card>
-          <form onSubmit={handleUpload} style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 420 }}>
-            <div>
-              <label style={{ fontSize: 13, opacity: 0.7 }}>Arquivo (PDF ou CSV)</label>
-              <br />
-              <input
+          <form onSubmit={handleUpload} noValidate style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 420 }}>
+            <Campo>
+              <label htmlFor="arquivo-fatura">Arquivo (PDF ou CSV)</label>
+              <InputArquivo
+                id="arquivo-fatura"
                 type="file" accept=".pdf,.csv"
-                onChange={(e) => setArquivo(e.target.files?.[0] || null)}
+                aria-invalid={!!erros.arquivo}
+                aria-describedby={erros.arquivo ? "erro-arquivo-fatura" : undefined}
+                onChange={(e) => {
+                  setArquivo(e.target.files?.[0] || null);
+                  setErros((x) => ({ ...x, arquivo: undefined }));
+                }}
               />
-            </div>
-            <div>
-              <label style={{ fontSize: 13, opacity: 0.7 }}>Forma de pagamento</label>
-              <FormaSelect value={formaId} onChange={setFormaId} />
-            </div>
-            <button type="submit" disabled={enviando}>
+              {erros.arquivo && <ErroCampo id="erro-arquivo-fatura">{erros.arquivo}</ErroCampo>}
+            </Campo>
+            <Campo>
+              <label htmlFor="forma-fatura">Forma de pagamento</label>
+              <FormaSelect
+                id="forma-fatura"
+                value={formaId}
+                onChange={(v) => {
+                  setFormaId(v);
+                  setErros((x) => ({ ...x, forma: undefined }));
+                }}
+                aria-invalid={!!erros.forma}
+                aria-describedby={erros.forma ? "erro-forma-fatura" : undefined}
+              />
+              {erros.forma && <ErroCampo id="erro-forma-fatura">{erros.forma}</ErroCampo>}
+            </Campo>
+            <Botao type="submit" disabled={enviando}>
               {enviando ? "Lendo arquivo..." : "Enviar e revisar"}
-            </button>
+            </Botao>
           </form>
         </Card>
       ) : (
@@ -143,7 +164,7 @@ export default function ImportacaoPage() {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
             <thead>
               <tr>
-                <th></th>
+                <th><span className="sr-only">Incluir</span></th>
                 <th style={{ textAlign: "left" }}>Data</th>
                 <th style={{ textAlign: "left" }}>Descrição</th>
                 <th style={{ textAlign: "left" }}>Categoria</th>
@@ -156,6 +177,7 @@ export default function ImportacaoPage() {
                   <td>
                     <input
                       type="checkbox" checked={linha.incluir}
+                      aria-label={`Incluir ${linha.descricao}`}
                       onChange={(e) => atualizarLinha(i, "incluir", e.target.checked)}
                     />
                   </td>
@@ -168,6 +190,7 @@ export default function ImportacaoPage() {
                   </td>
                   <td>
                     <CategoriaSelect
+                      aria-label={`Categoria de ${linha.descricao}`}
                       value={linha.categoria_id}
                       onChange={(v) => atualizarLinha(i, "categoria_id", v)}
                     />

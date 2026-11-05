@@ -21,7 +21,7 @@ export const Selo = styled.span`
   position: absolute;
   top: -10px;
   right: 16px;
-  background: ${({ theme }) => theme.colors.primary};
+  background: ${({ theme }) => theme.colors.primarySolid};
   color: white;
   font-size: 11px;
   padding: 2px 10px;
