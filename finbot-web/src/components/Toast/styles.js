@@ -14,6 +14,14 @@ export const Box = styled.div`
   border-radius: ${({ theme }) => theme.radius.md};
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
   z-index: 1000;
+
+  /* acima da BottomNav (64px) no celular, centralizado */
+  @media (max-width: 860px) {
+    bottom: calc(64px + env(safe-area-inset-bottom) + ${({ theme }) => theme.spacing(3)});
+    right: ${({ theme }) => theme.spacing(4)};
+    left: ${({ theme }) => theme.spacing(4)};
+    text-align: center;
+  }
 `;
 
 // Wrapper sempre presente da região aria-live — não ocupa espaço nem

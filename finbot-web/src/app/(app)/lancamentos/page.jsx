@@ -4,7 +4,7 @@
 // PLANO_EXECUCAO.md). Abas trocam o recurso (gastos x entradas) inteiro,
 // não só um filtro — são listagens/formulários genuinamente diferentes
 // (gasto tem categoria+forma+parcelamento; entrada não tem nenhum dos dois).
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useApi } from "@/hooks/useApi";
 import api from "@/services/api";
 import { brl, formatarDataBR } from "@/utils/format";
@@ -17,10 +17,11 @@ import CategoriaSelect from "@/components/CategoriaSelect";
 import FormaSelect from "@/components/FormaSelect";
 import MoneyInput from "@/components/MoneyInput";
 import Toast from "@/components/Toast";
+import { EVENTO_LANCAMENTO_SALVO } from "@/components/NovoLancamento";
 import { Field } from "@/components/AuthCard/styles";
 import {
-  Header, Abas, Aba, Filtros, FiltroCampo, BotaoNovo, Form,
-  ToggleTipo, ToggleBtn, Erro, SalvarBtn,
+  Header, Abas, Aba, Filtros, FiltroCampo, Form,
+  Erro, SalvarBtn,
 } from "./styles";
 
 function mesAtualISO() {
@@ -35,7 +36,6 @@ export default function LancamentosPage() {
   const [filtroForma, setFiltroForma] = useState(null);
   const [toast, setToast] = useState(null);
 
-  const [modalNovo, setModalNovo] = useState(false);
   const [modalEditar, setModalEditar] = useState(null); // gasto/entrada sendo editado, ou null
   const [modalExcluir, setModalExcluir] = useState(null); // gasto/entrada a excluir, ou null
 
@@ -62,6 +62,17 @@ export default function LancamentosPage() {
     if (aba === "gastos") refetchGastos();
     else refetchEntradas();
   }
+
+  // "Novo lançamento" agora é global (components/NovoLancamento, montado
+  // no layout) — a lista recarrega quando ele avisa que salvou algo.
+  useEffect(() => {
+    function onSalvo() {
+      if (aba === "gastos") refetchGastos();
+      else refetchEntradas();
+    }
+    window.addEventListener(EVENTO_LANCAMENTO_SALVO, onSalvo);
+    return () => window.removeEventListener(EVENTO_LANCAMENTO_SALVO, onSalvo);
+  }, [aba, refetchGastos, refetchEntradas]);
 
   async function handleExcluir(escopo = "unico") {
     try {
@@ -109,7 +120,6 @@ export default function LancamentosPage() {
     <div>
       <Header>
         <h1 style={{ fontSize: 20 }}>Lançamentos</h1>
-        <BotaoNovo onClick={() => setModalNovo(true)}>+ Novo lançamento</BotaoNovo>
       </Header>
 
       {/* aria-pressed: as abas são um par de botões de alternância — sem
@@ -143,7 +153,7 @@ export default function LancamentosPage() {
         loading={carregando}
         vazio={{
           titulo: aba === "gastos" ? "Nenhum gasto neste mês" : "Nenhuma entrada registrada",
-          descricao: "Use o botão \"Novo lançamento\" para adicionar.",
+          descricao: "Registre pelo botão \"Novo lançamento\" ou mande uma mensagem pro bot no WhatsApp.",
         }}
         linhaAtenuada={(row) => !!row.projetado}
         acoes={(row) =>
@@ -160,17 +170,6 @@ export default function LancamentosPage() {
             </>
           )
         }
-      />
-
-      <ModalNovoLancamento
-        aberto={modalNovo}
-        onFechar={() => setModalNovo(false)}
-        onSalvo={() => {
-          setModalNovo(false);
-          avisar("Lançamento registrado!");
-          refetchAtual();
-        }}
-        onErro={(msg) => avisar(msg, "erro")}
       />
 
       {modalEditar && (
@@ -221,161 +220,6 @@ export default function LancamentosPage() {
 
       <Toast mensagem={toast?.mensagem} tipo={toast?.tipo} />
     </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Modal: novo lançamento (toggle gasto/entrada)
-// ---------------------------------------------------------------------------
-
-function ModalNovoLancamento({ aberto, onFechar, onSalvo, onErro }) {
-  const [tipo, setTipo] = useState("gasto"); // gasto | entrada
-  const [valor, setValor] = useState(0);
-  const [descricao, setDescricao] = useState("");
-  const [categoriaId, setCategoriaId] = useState(null);
-  const [formaId, setFormaId] = useState(null);
-  const [parcelado, setParcelado] = useState(false);
-  const [parcelas, setParcelas] = useState(2);
-  // Pedido do Lucas (24/07/2026): as entradas dele são quase todas fixas
-  // (salário, VA/VR) — vinha esquecendo de marcar o checkbox e a entrada
-  // ficava avulsa, sumindo do board de /contas no mês seguinte. Só troca o
-  // DEFAULT do checkbox pra marcado; continua editável por linha (bônus,
-  // 13º e outras entradas de uma vez só desmarcam antes de salvar).
-  const [recorrente, setRecorrente] = useState(true);
-  const [diaLancamento, setDiaLancamento] = useState(new Date().getDate());
-  const [erro, setErro] = useState("");
-  const [enviando, setEnviando] = useState(false);
-
-  function resetar() {
-    setTipo("gasto");
-    setValor(0);
-    setDescricao("");
-    setCategoriaId(null);
-    setFormaId(null);
-    setParcelado(false);
-    setParcelas(2);
-    setRecorrente(true);
-    setDiaLancamento(new Date().getDate());
-    setErro("");
-  }
-
-  async function handleSubmit(e) {
-    e.preventDefault();
-    setErro("");
-
-    if (!valor || valor <= 0) {
-      setErro("Informe um valor maior que zero.");
-      return;
-    }
-
-    setEnviando(true);
-    try {
-      if (tipo === "entrada") {
-        // `recorrente` cria também o modelo em entradas_fixas — o lançador
-        // diário repete a entrada nos próximos meses no dia informado.
-        await api.post("/entradas", {
-          valor, descricao,
-          ...(recorrente ? { recorrente: true, dia_lancamento: diaLancamento } : {}),
-        });
-      } else {
-        if (!categoriaId || !formaId) {
-          setErro("Selecione categoria e forma de pagamento.");
-          setEnviando(false);
-          return;
-        }
-        // `parcelas` >= 2 faz o POST /gastos criar a compra parcelada
-        // inteira (services/parcelamento.py — a mesma do bot; N gastos,
-        // 1 por parcela, competência própria). Sem parcelas = avulso.
-        await api.post("/gastos", {
-          valor, descricao, categoria_id: categoriaId, forma_pagamento_id: formaId,
-          ...(parcelado && parcelas >= 2 ? { parcelas } : {}),
-        });
-      }
-      resetar();
-      onSalvo();
-    } catch (err) {
-      onErro(err?.response?.data?.mensagem || "Não foi possível salvar.");
-    } finally {
-      setEnviando(false);
-    }
-  }
-
-  return (
-    <Modal aberto={aberto} titulo="Novo lançamento" onFechar={() => { resetar(); onFechar(); }}>
-      <Form onSubmit={handleSubmit}>
-        <ToggleTipo>
-          <ToggleBtn type="button" $ativo={tipo === "gasto"} onClick={() => setTipo("gasto")}>
-            💸 Gasto
-          </ToggleBtn>
-          <ToggleBtn type="button" $ativo={tipo === "entrada"} onClick={() => setTipo("entrada")}>
-            📈 Entrada
-          </ToggleBtn>
-        </ToggleTipo>
-
-        <Field>
-          <label htmlFor="valor">Valor</label>
-          <MoneyInput id="valor" value={valor} onChange={setValor} />
-        </Field>
-
-        <Field>
-          <label htmlFor="descricao">Descrição</label>
-          <input id="descricao" value={descricao} onChange={(e) => setDescricao(e.target.value)} />
-        </Field>
-
-        {tipo === "entrada" && (
-          <>
-            <Field>
-              <label>
-                <input type="checkbox" checked={recorrente} onChange={(e) => setRecorrente(e.target.checked)} />
-                {" "}Recorrente/Fixo (cai todo mês — ex: salário)
-              </label>
-            </Field>
-            {recorrente && (
-              <Field>
-                <label htmlFor="dia-entrada">Dia do mês em que cai</label>
-                <input
-                  id="dia-entrada" type="number" min={1} max={31}
-                  value={diaLancamento} onChange={(e) => setDiaLancamento(Number(e.target.value))}
-                />
-              </Field>
-            )}
-          </>
-        )}
-
-        {tipo === "gasto" && (
-          <>
-            <Field>
-              <label htmlFor="categoria">Categoria</label>
-              <CategoriaSelect id="categoria" value={categoriaId} onChange={setCategoriaId} />
-            </Field>
-            <Field>
-              <label htmlFor="forma">Forma de pagamento</label>
-              <FormaSelect id="forma" value={formaId} onChange={setFormaId} />
-            </Field>
-            <Field>
-              <label>
-                <input type="checkbox" checked={parcelado} onChange={(e) => setParcelado(e.target.checked)} />
-                {" "}Compra parcelada
-              </label>
-            </Field>
-            {parcelado && (
-              <Field>
-                <label htmlFor="parcelas">Número de parcelas</label>
-                <input
-                  id="parcelas" type="number" min={2} max={48}
-                  value={parcelas} onChange={(e) => setParcelas(Number(e.target.value))}
-                />
-              </Field>
-            )}
-          </>
-        )}
-
-        {erro && <Erro>{erro}</Erro>}
-        <SalvarBtn type="submit" disabled={enviando}>
-          {enviando ? "Salvando..." : "Salvar"}
-        </SalvarBtn>
-      </Form>
-    </Modal>
   );
 }
 

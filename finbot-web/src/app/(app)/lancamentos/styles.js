@@ -55,20 +55,6 @@ export const FiltroCampo = styled.div`
   }
 `;
 
-export const BotaoNovo = styled.button`
-  background: ${({ theme }) => theme.colors.primarySolid};
-  color: white;
-  border: none;
-  border-radius: ${({ theme }) => theme.radius.sm};
-  padding: ${({ theme }) => theme.spacing(2.5)} ${({ theme }) => theme.spacing(4)};
-  font-weight: 600;
-  cursor: pointer;
-
-  &:hover {
-    opacity: 0.9;
-  }
-`;
-
 export const Form = styled.form`
   display: flex;
   flex-direction: column;
@@ -84,20 +70,6 @@ export const Form = styled.form`
 // e era a causa do campo Descrição aparecer sem estilo (fundo branco
 // padrão do browser) no modal de lançamento. page.jsx agora importa Field
 // de @/components/AuthCard/styles, igual formas/categorias/fixas já faziam.
-
-export const ToggleTipo = styled.div`
-  display: flex;
-  gap: ${({ theme }) => theme.spacing(2)};
-`;
-
-export const ToggleBtn = styled.button`
-  flex: 1;
-  padding: ${({ theme }) => theme.spacing(2)};
-  border-radius: ${({ theme }) => theme.radius.sm};
-  border: 1px solid ${({ theme, $ativo }) => ($ativo ? theme.colors.primary : theme.colors.border)};
-  background: ${({ theme, $ativo }) => ($ativo ? theme.colors.surfaceAlt : "transparent")};
-  cursor: pointer;
-`;
 
 export const Erro = styled.div`
   color: ${({ theme }) => theme.colors.danger};
