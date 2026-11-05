@@ -2,11 +2,154 @@ import styled from "styled-components";
 
 export const Header = styled.div`
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   flex-wrap: wrap;
   gap: ${({ theme }) => theme.spacing(3)};
   margin-bottom: ${({ theme }) => theme.spacing(5)};
+`;
+
+export const Titulo = styled.h1`
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+`;
+
+export const Subtitulo = styled.p`
+  font-size: 13px;
+  color: ${({ theme }) => theme.colors.textMuted};
+  margin-top: 4px;
+  max-width: 60ch;
+`;
+
+// ---- resumo (mesma linguagem do Início) --------------------------------------
+
+export const Hero = styled.section`
+  background: ${({ theme }) => theme.colors.surface};
+  border: 1px solid ${({ theme }) => theme.colors.border};
+  border-radius: ${({ theme }) => theme.radius.lg};
+  padding: ${({ theme }) => theme.spacing(5)};
+  margin-bottom: ${({ theme }) => theme.spacing(5)};
+
+  @media (max-width: 640px) {
+    padding: ${({ theme }) => theme.spacing(4)};
+  }
+`;
+
+export const HeroRotulo = styled.div`
+  font-size: 14px;
+  color: ${({ theme }) => theme.colors.textMuted};
+`;
+
+export const HeroValor = styled.div`
+  font-size: clamp(30px, 6vw, 40px);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+  margin-top: ${({ theme }) => theme.spacing(1)};
+  color: ${({ theme, $negativo }) => ($negativo ? theme.colors.danger : theme.colors.text)};
+`;
+
+export const HeroBarra = styled.div`
+  height: 8px;
+  border-radius: 999px;
+  background: ${({ theme }) => theme.colors.surfaceAlt};
+  overflow: hidden;
+  margin-top: ${({ theme }) => theme.spacing(4)};
+`;
+
+export const HeroBarraCheia = styled.div`
+  height: 100%;
+  border-radius: 999px;
+  background: ${({ theme }) => theme.colors.success};
+`;
+
+export const HeroLegenda = styled.div`
+  font-size: 13px;
+  color: ${({ theme }) => theme.colors.textMuted};
+  margin-top: ${({ theme }) => theme.spacing(2)};
+  font-variant-numeric: tabular-nums;
+`;
+
+export const HeroChips = styled.div`
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: ${({ theme }) => theme.spacing(3)};
+  margin-top: ${({ theme }) => theme.spacing(5)};
+  padding-top: ${({ theme }) => theme.spacing(4)};
+  border-top: 1px solid ${({ theme }) => theme.colors.border};
+`;
+
+export const HeroChip = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+
+  span {
+    font-size: 13px;
+    color: ${({ theme }) => theme.colors.textMuted};
+  }
+
+  strong {
+    font-size: 16px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+  }
+
+  strong[data-tom="entrada"] { color: ${({ theme }) => theme.colors.success}; }
+  strong[data-tom="perigo"] { color: ${({ theme }) => theme.colors.danger}; }
+
+  @media (max-width: 480px) {
+    strong { font-size: 14px; }
+  }
+`;
+
+// ---- abas de coluna (só celular) ----------------------------------------------
+
+export const AbasColuna = styled.div`
+  display: none;
+
+  @media (max-width: 860px) {
+    display: flex;
+    gap: 4px;
+    padding: 4px;
+    margin-bottom: ${({ theme }) => theme.spacing(3)};
+    background: ${({ theme }) => theme.colors.surfaceAlt};
+    border-radius: ${({ theme }) => theme.radius.md};
+  }
+`;
+
+export const AbaColuna = styled.button`
+  flex: 1;
+  min-height: 40px;
+  border: none;
+  border-radius: ${({ theme }) => theme.radius.sm};
+  background: transparent;
+  color: ${({ theme }) => theme.colors.textMuted};
+  font-size: 14px;
+  font-weight: 500;
+
+  span {
+    font-size: 12px;
+    opacity: 0.8;
+  }
+
+  &[aria-selected="true"] {
+    background: ${({ theme }) => theme.colors.surface};
+    color: ${({ theme }) => theme.colors.text};
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  }
+`;
+
+export const Prazo = styled.span`
+  font-weight: ${({ $tom }) => ($tom === "neutro" ? 400 : 600)};
+  color: ${({ theme, $tom }) =>
+    $tom === "perigo" ? theme.colors.danger
+      : $tom === "alerta" ? theme.colors.warning
+      : "inherit"};
 `;
 
 // 3 colunas como na planilha (Entradas | Não pagos | Pagos). Mesmo truque de
@@ -26,6 +169,11 @@ export const Coluna = styled.section`
   padding: ${({ theme }) => theme.spacing(4)};
   min-height: 160px;
   transition: border-color 120ms, background 120ms;
+
+  /* celular: só a coluna da aba escolhida (AbasColuna) */
+  @media (max-width: 860px) {
+    display: ${({ $oculta }) => ($oculta ? "none" : "block")};
+  }
 
   /* Realce durante o arraste — só na coluna que aceita o card sendo
      arrastado (o pai controla via $alvo), pra não piscar a tela toda. */
@@ -185,6 +333,11 @@ export const BotaoMover = styled.button`
   &:disabled {
     opacity: 0.4;
     cursor: not-allowed;
+  }
+
+  @media (max-width: 640px) {
+    width: 40px;
+    height: 40px;
   }
 `;
 

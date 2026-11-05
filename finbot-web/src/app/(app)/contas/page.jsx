@@ -19,14 +19,15 @@ import api from "@/services/api";
 import { brl, formatarCompetencia, formatarDataBR, parseValorBR } from "@/utils/format";
 import MesPicker from "@/components/MesPicker";
 import Loading from "@/components/Loading";
-import StatCard from "@/components/StatCard";
 import Toast from "@/components/Toast";
 import Modal from "@/components/Modal";
 import MoneyInput from "@/components/MoneyInput";
+import { mesAtualISO, diasAte, textoPrazo } from "@/utils/datas";
 import {
-  Header, Board, Coluna, ColunaHeader, ColunaTitulo, ColunaTotal, Card,
+  Header, Titulo, Subtitulo, Hero, HeroRotulo, HeroValor, HeroBarra, HeroBarraCheia,
+  HeroLegenda, HeroChips, HeroChip, AbasColuna, AbaColuna, Prazo, Board, Coluna, ColunaHeader, ColunaTitulo, ColunaTotal, Card,
   CardInfo, CardTitulo, CardDetalhe, CardValor, ValorRiscado, BotaoMover, Indicador,
-  InputValor, Vazio, Resumo, ListaDetalhe, ItemDetalhe,
+  InputValor, Vazio, ListaDetalhe, ItemDetalhe,
   GrupoCategoria, ItemAninhado, SeletorCategoria,
   BotaoNovaEntrada, FormNovaEntrada, CampoDescricao, CampoDia,
 } from "./styles";
@@ -36,11 +37,6 @@ import {
 function ultimoDiaDoMes(mesISO) {
   const [ano, mesNum] = mesISO.split("-").map(Number);
   return new Date(ano, mesNum, 0).getDate();
-}
-
-function mesAtualISO() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
 // Pedido do Lucas (24/07/2026): "deve ser salvo qual foi o último mês
@@ -141,6 +137,10 @@ export default function ContasPage() {
   const [colunaAlvo, setColunaAlvo] = useState(null); // "entradas" | "a_pagar" | "pagas"
   const [salvando, setSalvando] = useState(null);
   const [detalheChave, setDetalheChave] = useState(null); // fatura aberta no modal
+  // Celular (≤860px): uma coluna por vez, escolhida nas abas — 3 colunas
+  // empilhadas obrigavam a rolar a lista inteira de não pagos pra chegar
+  // nos pagos. No desktop as 3 aparecem lado a lado como sempre.
+  const [abaMobile, setAbaMobile] = useState("a_pagar");
 
   // Ordem preferida de cada coluna (ver bloco de comentário acima) — recarrega
   // do localStorage sempre que troca de mês, porque a preferência é por mês.
@@ -257,6 +257,10 @@ export default function ContasPage() {
         soltar(coluna, chave, null, false); // sem alvo = solta no fim da coluna
       },
       $alvo: colunaAlvo === coluna && arrastando !== null,
+      $oculta: abaMobile !== coluna,
+      id: `coluna-${coluna}`,
+      role: "region",
+      "aria-labelledby": `titulo-${coluna}`,
     };
   }
 
@@ -264,11 +268,11 @@ export default function ContasPage() {
     <div>
       <Header>
         <div>
-          <h1 style={{ fontSize: 20 }}>Contas do mês</h1>
-          <p style={{ fontSize: 13, opacity: 0.7, marginTop: 4 }}>
-            O que sai do bolso neste mês — fixas em boleto e faturas que vencem
-            agora. Compras no débito/pix não entram: já foram pagas na hora.
-          </p>
+          <Titulo>Contas do mês</Titulo>
+          <Subtitulo>
+            O que sai do bolso neste mês: fixas em boleto e faturas que vencem
+            agora. Débito e pix não entram, já foram pagos na hora.
+          </Subtitulo>
         </div>
         <MesPicker value={mes} onChange={setMes} />
       </Header>
@@ -277,26 +281,32 @@ export default function ContasPage() {
         <Loading />
       ) : (
         <>
-          <Resumo>
-            <StatCard label="Entradas" valor={brl(totais.entradas)} tom="sucesso" />
-            <StatCard label="Total de saídas" valor={brl(totais.saidas)} tom="erro" />
-            <StatCard
-              label="Falta pagar"
-              valor={brl(totais.a_pagar)}
-              detalhe={`${brl(totais.pago)} já pago`}
-              tom={totais.a_pagar > 0 ? "erro" : "sucesso"}
-            />
-            <StatCard
-              label="Sobra do mês"
-              valor={brl(totais.sobra)}
-              tom={totais.sobra >= 0 ? "sucesso" : "erro"}
-            />
-          </Resumo>
+          <ResumoContas totais={totais} />
+
+          {/* Abas só aparecem no celular (ver abaMobile). */}
+          <AbasColuna role="tablist" aria-label="Colunas">
+            {[
+              ["a_pagar", "Não pagos", aPagarOrdenadas.length],
+              ["pagas", "Pagos", pagasOrdenadas.length],
+              ["entradas", "Entradas", entradasOrdenadas.length],
+            ].map(([id, rotulo, qtd]) => (
+              <AbaColuna
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={abaMobile === id}
+                aria-controls={`coluna-${id}`}
+                onClick={() => setAbaMobile(id)}
+              >
+                {rotulo} <span>{qtd}</span>
+              </AbaColuna>
+            ))}
+          </AbasColuna>
 
           <Board>
             <Coluna {...propsColuna("entradas")}>
               <ColunaHeader>
-                <ColunaTitulo>Entradas</ColunaTitulo>
+                <ColunaTitulo id="titulo-entradas">Entradas</ColunaTitulo>
                 <ColunaTotal $tom="sucesso">{brl(totais.entradas)}</ColunaTotal>
               </ColunaHeader>
               {entradasOrdenadas.length === 0 ? (
@@ -322,8 +332,8 @@ export default function ContasPage() {
 
             <Coluna {...propsColuna("a_pagar")}>
               <ColunaHeader>
-                <ColunaTitulo>Não pagos</ColunaTitulo>
-                <ColunaTotal $tom="erro">{brl(totais.a_pagar)}</ColunaTotal>
+                <ColunaTitulo id="titulo-a_pagar">Não pagos</ColunaTitulo>
+                <ColunaTotal $tom={totais.a_pagar > 0 ? "erro" : undefined}>{brl(totais.a_pagar)}</ColunaTotal>
               </ColunaHeader>
               {aPagarOrdenadas.length === 0 ? (
                 <Vazio>Tudo pago neste mês.</Vazio>
@@ -347,7 +357,7 @@ export default function ContasPage() {
 
             <Coluna {...propsColuna("pagas")}>
               <ColunaHeader>
-                <ColunaTitulo>Pagos</ColunaTitulo>
+                <ColunaTitulo id="titulo-pagas">Pagos</ColunaTitulo>
                 <ColunaTotal $tom="sucesso">{brl(totais.pago)}</ColunaTotal>
               </ColunaHeader>
               {pagasOrdenadas.length === 0 ? (
@@ -377,6 +387,50 @@ export default function ContasPage() {
 
       <Toast mensagem={toast?.mensagem} tipo={toast?.tipo} />
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Resumo do mês (redesign 05/11/2026): no lugar de 4 StatCards iguais, o
+// número que importa (sobra) em destaque + barra de quanto das saídas já
+// foi pago. Mesma linguagem do Início.
+function ResumoContas({ totais }) {
+  const pctPago = totais.saidas > 0 ? Math.min(100, (totais.pago / totais.saidas) * 100) : 100;
+  return (
+    <Hero aria-label="Resumo do mês">
+      <HeroRotulo>Sobra do mês</HeroRotulo>
+      <HeroValor $negativo={totais.sobra < 0}>{brl(totais.sobra)}</HeroValor>
+      <HeroBarra
+        role="progressbar"
+        aria-label="Saídas já pagas"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(pctPago)}
+      >
+        <HeroBarraCheia style={{ width: `${pctPago}%` }} />
+      </HeroBarra>
+      <HeroLegenda>
+        {totais.a_pagar <= 0
+          ? `Tudo pago · ${brl(totais.pago)}`
+          : totais.pago > 0
+            ? `${brl(totais.pago)} de ${brl(totais.saidas)} já pago · falta ${brl(totais.a_pagar)}`
+            : `Nada pago ainda · falta ${brl(totais.a_pagar)}`}
+      </HeroLegenda>
+      <HeroChips>
+        <HeroChip>
+          <span>Entradas</span>
+          <strong data-tom="entrada">{brl(totais.entradas)}</strong>
+        </HeroChip>
+        <HeroChip>
+          <span>Saídas</span>
+          <strong>{brl(totais.saidas)}</strong>
+        </HeroChip>
+        <HeroChip>
+          <span>Falta pagar</span>
+          <strong data-tom={totais.a_pagar > 0 ? "perigo" : "entrada"}>{brl(totais.a_pagar)}</strong>
+        </HeroChip>
+      </HeroChips>
+    </Hero>
   );
 }
 
@@ -712,9 +766,21 @@ function CardConta({
           {temDetalhe && <span aria-hidden="true" style={{ opacity: 0.5, fontWeight: 400 }}> ›</span>}
         </CardTitulo>
         <CardDetalhe>
-          {conta.tipo === "entrada"
-            ? formatarDataBR(conta.data)
-            : (conta.vencimento ? `vence ${formatarDataBR(conta.vencimento)} · ` : "") + (conta.detalhe || "")}
+          {conta.tipo === "entrada" ? (
+            formatarDataBR(conta.data)
+          ) : (
+            <>
+              {/* Não pago: prazo relativo colorido (venceu/hoje/amanhã) —
+                  igual ao bloco "A vencer" do Início. Pago: só a data. */}
+              {conta.vencimento && !conta.pago && (() => {
+                const prazo = textoPrazo(diasAte(conta.vencimento), conta.vencimento);
+                return <Prazo $tom={prazo.tom}>{prazo.texto}</Prazo>;
+              })()}
+              {conta.vencimento && conta.pago && `vencimento ${formatarDataBR(conta.vencimento)}`}
+              {conta.vencimento && conta.detalhe ? " · " : ""}
+              {conta.detalhe || ""}
+            </>
+          )}
         </CardDetalhe>
       </CardInfo>
 

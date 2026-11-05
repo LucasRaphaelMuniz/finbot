@@ -27,3 +27,16 @@ export function rotuloDia(iso) {
   const semana = new Date(a, m - 1, d).toLocaleDateString("pt-BR", { weekday: "long" });
   return `${semana.charAt(0).toUpperCase()}${semana.slice(1)}, ${formatarDataBR(iso).slice(0, 5)}`;
 }
+
+// Prazo de vencimento em texto + tom (perigo/alerta/neutro) — Início e
+// Contas do mês.
+export function textoPrazo(dias, iso) {
+  if (dias == null) return { texto: "sem data", tom: "neutro" };
+  if (dias < 0) return { texto: dias === -1 ? "venceu ontem" : `venceu há ${-dias} dias`, tom: "perigo" };
+  if (dias === 0) return { texto: "vence hoje", tom: "alerta" };
+  if (dias === 1) return { texto: "vence amanhã", tom: "alerta" };
+  if (dias <= 7) return { texto: `em ${dias} dias`, tom: "neutro" };
+  // data completa (dd/mm): só "dia 25" ficava ambíguo quando a conta é do
+  // mês anterior ao que está na tela (fatura que vence antes da virada).
+  return { texto: `vence ${formatarDataBR(iso).slice(0, 5)}`, tom: "neutro" };
+}
