@@ -18,9 +18,13 @@ import { useTema } from "@/components/ThemeRegistry";
 import api from "@/services/api";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
+import BottomNav from "@/components/BottomNav";
+import NovoLancamento from "@/components/NovoLancamento";
+import Toast from "@/components/Toast";
 import Loading from "@/components/Loading";
 import CompletarCadastro from "@/components/CompletarCadastro";
 import TourPrimeiroLogin from "@/components/TourPrimeiroLogin";
+import { Shell, Coluna, Main } from "./styles";
 
 export default function AppLayout({ children }) {
   const { loading, autenticado } = useAuth();
@@ -30,12 +34,23 @@ export default function AppLayout({ children }) {
   // Fase C do AUDITORIA_E_PLANO_CADASTRO.md — null enquanto não sabemos
   // ainda (evita "piscar" o tour antes do GET /conta/eu responder).
   const [tutorialVisto, setTutorialVisto] = useState(null);
-  // Menu gaveta do mobile (Sidebar/Header — ver seus styles.js pro
-  // breakpoint de 860px). No desktop esse estado é irrelevante: a Nav
-  // ignora `aberta` via CSS e fica sempre visível.
+  // Menu gaveta do mobile (abaixo de 860px), aberto pelo "Mais" da
+  // BottomNav. No desktop esse estado é irrelevante: a Nav ignora `aberta`
+  // via CSS e fica sempre visível.
   const [menuAberto, setMenuAberto] = useState(false);
   const menuBtnRef = useRef(null);
-  // Fecha a gaveta e devolve o foco pro botão ☰ (Esc ou clique no fundo).
+  // Novo lançamento é ação global (Header no desktop, "+" da BottomNav no
+  // celular) — modal e toast de confirmação moram aqui, uma vez só.
+  const [novoAberto, setNovoAberto] = useState(false);
+  const [toast, setToast] = useState(null);
+  const toastTimer = useRef(null);
+  const avisar = useCallback((mensagem, tipo = "sucesso") => {
+    clearTimeout(toastTimer.current);
+    setToast({ mensagem, tipo });
+    toastTimer.current = setTimeout(() => setToast(null), 3000);
+  }, []);
+  useEffect(() => () => clearTimeout(toastTimer.current), []);
+  // Fecha a gaveta e devolve o foco pro botão "Mais" (Esc ou clique no fundo).
   const fecharMenu = useCallback(() => {
     if (!menuAberto) return;
     setMenuAberto(false);
@@ -85,15 +100,31 @@ export default function AppLayout({ children }) {
   }
 
   return (
-    <div style={{ display: "flex" }}>
+    <Shell>
       <Sidebar aberta={menuAberto} onFechar={fecharMenu} />
-      <div style={{ flex: 1, minHeight: "100vh", minWidth: 0 }}>
-        <Header ref={menuBtnRef} menuAberto={menuAberto} onAbrirMenu={() => setMenuAberto(true)} />
-        <main style={{ padding: 24 }}>{children}</main>
-      </div>
+      <Coluna>
+        <Header onNovoLancamento={() => setNovoAberto(true)} />
+        <Main>{children}</Main>
+      </Coluna>
+      <BottomNav
+        ref={menuBtnRef}
+        menuAberto={menuAberto}
+        onAbrirMenu={() => setMenuAberto(true)}
+        onNovoLancamento={() => setNovoAberto(true)}
+      />
+      <NovoLancamento
+        aberto={novoAberto}
+        onFechar={() => setNovoAberto(false)}
+        onSalvo={(tipo) => {
+          setNovoAberto(false);
+          avisar(tipo === "entrada" ? "Entrada registrada." : "Gasto registrado.");
+        }}
+        onErro={(msg) => avisar(msg, "erro")}
+      />
+      <Toast mensagem={toast?.mensagem} tipo={toast?.tipo} />
       {tutorialVisto === false && (
         <TourPrimeiroLogin onFechar={() => setTutorialVisto(true)} />
       )}
-    </div>
+    </Shell>
   );
 }

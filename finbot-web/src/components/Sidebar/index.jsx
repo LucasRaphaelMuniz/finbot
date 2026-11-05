@@ -1,38 +1,25 @@
 "use client";
 
-// components/Sidebar — navegação principal do (app)/layout.jsx. Rotas
-// espelham 1:1 as telas da Fase 5 do PLANO_EXECUCAO.md.
+// components/Sidebar — navegação principal do (app)/layout.jsx. Itens e
+// grupos vêm de ./itens.js (o mesmo mapa da BottomNav do celular).
 import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
-import { Nav, Logo, ItemLink, Overlay } from "./styles";
-
-const ITENS = [
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/contas", label: "Contas do mês" },
-  { href: "/lancamentos", label: "Lançamentos" },
-  { href: "/fixas", label: "Despesas fixas" },
-  { href: "/parcelas", label: "Parcelas futuras" },
-  { href: "/importacao", label: "Importação" },
-  { href: "/grupo", label: "Grupo" },
-  { href: "/formas", label: "Formas de pagamento" },
-  { href: "/categorias", label: "Categorias" },
-  { href: "/planos", label: "Planos" },
-  { href: "/conta", label: "Conta" },
-];
+import { GRUPOS_NAV, rotaAtiva } from "./itens";
+import { Nav, Logo, LogoMarca, Grupo, GrupoTitulo, ItemLink, Overlay } from "./styles";
 
 export const ID_MENU = "menu-principal";
-const QUERY_GAVETA = "(max-width: 860px)";
+export const QUERY_GAVETA = "(max-width: 860px)";
 
-// `aberta`/`onFechar` só importam abaixo de 860px (menu gaveta) — no
-// desktop a Nav ignora esses props via CSS (ver styles.js) e fica sempre
-// visível.
+// Abaixo de 860px a Sidebar vira gaveta, aberta pelo botão "Mais" da
+// BottomNav (`aberta`/`onFechar`). No desktop esses props não fazem nada:
+// a Nav ignora `aberta` via CSS e fica sempre visível.
 //
 // Acessibilidade da gaveta (auditoria de UX, 05/11/2026): ao abrir, o foco
-// vai pro link da tela atual; Esc fecha e devolve o foco pro botão ☰
-// (quem chama passa `onFechar`, o layout cuida do retorno). Fechada no
-// mobile, a Nav fica `inert` — antes, mesmo fora da tela (translateX),
-// os 11 links continuavam no Tab e no leitor de tela.
+// vai pro link da tela atual; Esc fecha e devolve o foco pro botão que
+// abriu (o layout cuida do retorno). Fechada no mobile, a Nav fica `inert`
+// — senão, mesmo fora da tela (translateX), os links continuariam no Tab e
+// no leitor de tela.
 export default function Sidebar({ aberta = false, onFechar }) {
   const pathname = usePathname();
   const navRef = useRef(null);
@@ -69,26 +56,29 @@ export default function Sidebar({ aberta = false, onFechar }) {
   return (
     <>
       <Overlay $aberta={aberta} onClick={onFechar} />
-      <Nav
-        ref={navRef}
-        id={ID_MENU}
-        aria-label="Menu principal"
-        $aberta={aberta}
-      >
-        <Logo>💰 Finbot</Logo>
-        {ITENS.map((item) => {
-          const ativo = pathname?.startsWith(item.href);
-          return (
-            <Link key={item.href} href={item.href} passHref legacyBehavior>
-              {/* onClick fecha o menu gaveta ao navegar — no mobile, sem
-                  isso a pessoa trocaria de tela com o menu ainda aberto por
-                  cima. No desktop é um no-op inofensivo. */}
-              <ItemLink $ativo={ativo} aria-current={ativo ? "page" : undefined} onClick={onFechar}>
-                {item.label}
-              </ItemLink>
-            </Link>
-          );
-        })}
+      <Nav ref={navRef} id={ID_MENU} aria-label="Menu principal" $aberta={aberta}>
+        <Logo>
+          <LogoMarca aria-hidden="true">f</LogoMarca>
+          finbot
+        </Logo>
+        {GRUPOS_NAV.map((grupo) => (
+          <Grupo key={grupo.titulo} role="group" aria-labelledby={`nav-${grupo.titulo}`}>
+            <GrupoTitulo id={`nav-${grupo.titulo}`}>{grupo.titulo}</GrupoTitulo>
+            {grupo.itens.map(({ href, label, Icone }) => {
+              const ativo = rotaAtiva(pathname, href);
+              return (
+                <Link key={href} href={href} passHref legacyBehavior>
+                  {/* onClick fecha a gaveta ao navegar no celular; no
+                      desktop é um no-op. */}
+                  <ItemLink $ativo={ativo} aria-current={ativo ? "page" : undefined} onClick={onFechar}>
+                    <Icone size={18} strokeWidth={1.75} aria-hidden="true" />
+                    {label}
+                  </ItemLink>
+                </Link>
+              );
+            })}
+          </Grupo>
+        ))}
       </Nav>
     </>
   );
