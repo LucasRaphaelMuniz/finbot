@@ -21,7 +21,7 @@ export default function PlanosPage() {
 
   return (
     <div>
-      <h1 style={{ fontSize: 20, marginBottom: 8 }}>Planos</h1>
+      <h2 style={{ fontSize: 17, marginBottom: 8 }}>Planos</h2>
       <p style={{ opacity: 0.7, marginBottom: 24, fontSize: 14 }}>
         Contratação ainda não está disponível — por enquanto, todos os grupos usam
         o finbot sem limite de membros, independente do plano mostrado abaixo.

@@ -42,7 +42,7 @@ export default function FormasPage() {
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 24 }}>
-        <h1 style={{ fontSize: 20 }}>Formas de pagamento</h1>
+        <h2 style={{ fontSize: 17 }}>Formas de pagamento</h2>
         <SalvarBtn type="button" style={{ padding: "10px 16px" }} onClick={() => setModalForma(null)}>+ Nova forma</SalvarBtn>
       </div>
 
