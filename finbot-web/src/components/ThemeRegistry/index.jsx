@@ -17,7 +17,7 @@
 // localStorage aqui é cache de UI, não a fonte de verdade — o banco continua
 // sendo o dono do dado (por isso "salvo por perfil": segue a conta entre
 // dispositivos, localStorage só evita o flash local).
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useMemo, useState } from "react";
 import { ThemeProvider } from "styled-components";
 import { getTheme } from "@/styles/theme";
 import GlobalStyle from "@/styles/global";
@@ -36,15 +36,21 @@ export default function ThemeRegistry({ children }) {
   // "dark" antes de trocar pro valor cacheado.
   const [tema, setTemaState] = useState(lerTemaCache);
 
-  function setTema(novoTema) {
+  // Estável (useCallback): (app)/layout.jsx tem `setTema` nas deps do
+  // efeito que busca GET /conta/eu. Com uma função nova a cada render, toda
+  // troca de tema re-disparava esse GET — e se ele voltasse antes do PUT
+  // /conta/tema gravar, desfazia a troca (o tema "voltava sozinho").
+  const setTema = useCallback((novoTema) => {
     setTemaState(novoTema);
     if (typeof window !== "undefined") {
       window.localStorage.setItem(TEMA_KEY, novoTema);
     }
-  }
+  }, []);
+
+  const valor = useMemo(() => ({ tema, setTema }), [tema, setTema]);
 
   return (
-    <TemaContext.Provider value={{ tema, setTema }}>
+    <TemaContext.Provider value={valor}>
       <ThemeProvider theme={getTheme(tema)}>
         <GlobalStyle />
         {children}
