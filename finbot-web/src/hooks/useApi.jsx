@@ -45,7 +45,11 @@ export function useApi(url, { skip = false } = {}) {
         if (id === idRef.current) setErro(err);
       })
       .finally(() => {
-        if (!silent) setLoading(false);
+        // Só a chamada mais recente desliga o loading: em dev o React
+        // dispara o efeito 2x, e a 1ª resposta (descartada) desligava o
+        // loading com a 2ª ainda no ar — a tela mostrava "vazio" por
+        // alguns segundos antes dos dados chegarem.
+        if (id === idRef.current) setLoading(false);
       });
   }, [url, skip]);
 

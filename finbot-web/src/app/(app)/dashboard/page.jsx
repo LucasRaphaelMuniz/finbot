@@ -19,6 +19,7 @@ import Link from "next/link";
 import { ArrowRight, CircleAlert, CircleCheck, TrendingUp } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { brl, formatarCompetencia, formatarDataBR } from "@/utils/format";
+import { mesAtualISO, diasAte, rotuloDia } from "@/utils/datas";
 import { categoriaVisual, CORES_CATEGORIA, COR_ENTRADA } from "@/utils/categoriaVisual";
 import ChartComparativo from "@/components/ChartComparativo";
 import MesPicker from "@/components/MesPicker";
@@ -34,23 +35,8 @@ import {
   ListaDetalhe, ItemDetalhe, TextoMuted, GrupoForma, ItemAninhado,
 } from "./styles";
 
-function mesAtualISO() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-}
-
 function nomeMes(mes) {
   return formatarCompetencia(`${mes}-01`).split("/")[0].toLowerCase();
-}
-
-// Diferença em dias entre hoje e uma data "YYYY-MM-DD" (sem fuso).
-function diasAte(iso) {
-  if (!iso) return null;
-  const [a, m, d] = iso.slice(0, 10).split("-").map(Number);
-  const hoje = new Date();
-  const alvo = new Date(a, m - 1, d);
-  const base = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate());
-  return Math.round((alvo - base) / 86400000);
 }
 
 function textoPrazo(dias, iso) {
@@ -60,16 +46,6 @@ function textoPrazo(dias, iso) {
   if (dias === 1) return { texto: "vence amanhã", tom: "alerta" };
   if (dias <= 7) return { texto: `em ${dias} dias`, tom: "neutro" };
   return { texto: `dia ${iso.slice(8, 10)}`, tom: "neutro" };
-}
-
-function rotuloDia(iso) {
-  const dias = diasAte(iso);
-  if (dias === 0) return "Hoje";
-  if (dias === -1) return "Ontem";
-  const [a, m, d] = iso.slice(0, 10).split("-").map(Number);
-  const data = new Date(a, m - 1, d);
-  const semana = data.toLocaleDateString("pt-BR", { weekday: "long" });
-  return `${semana.charAt(0).toUpperCase()}${semana.slice(1)}, ${formatarDataBR(iso).slice(0, 5)}`;
 }
 
 // Recarrega os blocos quando o modal global de novo lançamento salva algo.
