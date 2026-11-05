@@ -3,7 +3,7 @@
 // pro master do grupo (apaga tudo, inclusive o login). Esses testes cobrem
 // exatamente as travas que impedem apagar por engano — é a parte mais
 // arriscada da tela, por isso é a que mais vale testar.
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@/test-utils";
 import userEvent from "@testing-library/user-event";
 import ContaPage from "./page";
 import api from "@/services/api";

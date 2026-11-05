@@ -46,14 +46,14 @@ export default function FixasPage() {
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 24 }}>
         <h1 style={{ fontSize: 20 }}>Despesas fixas</h1>
-        <button onClick={() => setModalFixa(null)}>+ Nova despesa fixa</button>
+        <SalvarBtn type="button" style={{ padding: "10px 16px" }} onClick={() => setModalFixa(null)}>+ Nova despesa fixa</SalvarBtn>
       </div>
 
       <DataTable
         columns={[
           { key: "descricao", label: "Descrição" },
           {
-            key: "valor", label: "Valor",
+            key: "valor", label: "Valor", numerico: true,
             render: (f) => (
               <>
                 {brl(f.valor)}
@@ -103,6 +103,7 @@ export default function FixasPage() {
       <ConfirmDialog
         aberto={!!removendo}
         titulo="Remover despesa fixa"
+        textoConfirmar="Remover despesa fixa"
         mensagem={`"${removendo?.descricao}" não vai mais lançar automaticamente. Lançamentos já feitos permanecem no histórico.`}
         onConfirmar={remover}
         onCancelar={() => setRemovendo(null)}

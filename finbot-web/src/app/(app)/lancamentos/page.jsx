@@ -19,7 +19,7 @@ import MoneyInput from "@/components/MoneyInput";
 import Toast from "@/components/Toast";
 import { Field } from "@/components/AuthCard/styles";
 import {
-  Header, Abas, Aba, Filtros, BotaoNovo, Form,
+  Header, Abas, Aba, Filtros, FiltroCampo, BotaoNovo, Form,
   ToggleTipo, ToggleBtn, Erro, SalvarBtn,
 } from "./styles";
 
@@ -93,13 +93,13 @@ export default function LancamentosPage() {
         r.compra_parcelada_id ? `parcela ${r.parcela_num}/${r.total_parcelas || "?"}` :
         r.despesa_fixa_id ? "fixa" : "avulso",
     },
-    { key: "valor", label: "Valor", render: (r) => brl(r.valor) },
+    { key: "valor", label: "Valor", numerico: true, render: (r) => brl(r.valor) },
   ];
 
   const colunasEntradas = [
     { key: "data", label: "Data", render: (r) => formatarDataBR(r.data) },
     { key: "descricao", label: "Descrição" },
-    { key: "valor", label: "Valor", render: (r) => brl(r.valor) },
+    { key: "valor", label: "Valor", numerico: true, render: (r) => brl(r.valor) },
   ];
 
   const linhas = aba === "gastos" ? dadosGastos?.itens : dadosEntradas?.itens;
@@ -108,19 +108,31 @@ export default function LancamentosPage() {
   return (
     <div>
       <Header>
-        <Abas>
-          <Aba $ativa={aba === "gastos"} onClick={() => setAba("gastos")}>Gastos</Aba>
-          <Aba $ativa={aba === "entradas"} onClick={() => setAba("entradas")}>Entradas</Aba>
-        </Abas>
+        <h1 style={{ fontSize: 20 }}>Lançamentos</h1>
         <BotaoNovo onClick={() => setModalNovo(true)}>+ Novo lançamento</BotaoNovo>
       </Header>
 
+      {/* aria-pressed: as abas são um par de botões de alternância — sem
+          isso, leitor de tela não sabia qual dos dois estava ativo. */}
+      <Abas>
+        <Aba type="button" aria-pressed={aba === "gastos"} $ativa={aba === "gastos"} onClick={() => setAba("gastos")}>Gastos</Aba>
+        <Aba type="button" aria-pressed={aba === "entradas"} $ativa={aba === "entradas"} onClick={() => setAba("entradas")}>Entradas</Aba>
+      </Abas>
+
+      {/* Filtros lado a lado com label visível (antes: 2 selects de largura
+          total empilhados, sem label nenhum). */}
       <Filtros>
         <MesPicker value={mes} onChange={setMes} />
         {aba === "gastos" && (
           <>
-            <CategoriaSelect value={filtroCategoria} onChange={setFiltroCategoria} incluirTodas apenasAtivas={false} />
-            <FormaSelect value={filtroForma} onChange={setFiltroForma} incluirTodas />
+            <FiltroCampo>
+              <label htmlFor="filtro-categoria">Categoria</label>
+              <CategoriaSelect id="filtro-categoria" value={filtroCategoria} onChange={setFiltroCategoria} incluirTodas apenasAtivas={false} />
+            </FiltroCampo>
+            <FiltroCampo>
+              <label htmlFor="filtro-forma">Forma de pagamento</label>
+              <FormaSelect id="filtro-forma" value={filtroForma} onChange={setFiltroForma} incluirTodas />
+            </FiltroCampo>
           </>
         )}
       </Filtros>
@@ -182,7 +194,7 @@ export default function LancamentosPage() {
             compra parcelada. Excluir só essa parcela ou a compra inteira (todas as parcelas)?
           </p>
           <div style={{ display: "flex", gap: 8, marginTop: 16, justifyContent: "flex-end" }}>
-            <button onClick={() => setModalExcluir(null)}>Cancelar</button>
+            <button onClick={() => setModalExcluir(null)} data-autofocus>Cancelar</button>
             <button onClick={() => handleExcluir("unico")}>Só esta parcela</button>
             <button onClick={() => handleExcluir("compra")}>Compra inteira</button>
           </div>
@@ -190,7 +202,8 @@ export default function LancamentosPage() {
       ) : (
         <ConfirmDialog
           aberto={!!modalExcluir}
-          titulo="Confirmar exclusão"
+          titulo="Excluir lançamento"
+          textoConfirmar="Excluir lançamento"
           mensagem={
             // Lançamento de custo fixo (inclusive o antecipado do mês
             // seguinte): a exclusão grava supressão no backend (migração
@@ -198,8 +211,8 @@ export default function LancamentosPage() {
             // fixa segue lançando nos meses seguintes. Vale avisar, senão
             // parece que excluiu o custo fixo inteiro.
             modalExcluir?.despesa_fixa_id
-              ? "Este lançamento vem de um custo fixo. Excluir remove só este mês (não será relançado); o custo fixo continua ativo nos próximos meses."
-              : "Tem certeza que deseja excluir este lançamento?"
+              ? `"${modalExcluir.descricao || "Este lançamento"}" vem de um custo fixo. Excluir remove só este mês (não será relançado); o custo fixo continua ativo nos próximos meses.`
+              : `Excluir "${modalExcluir?.descricao || "lançamento sem descrição"}" de ${brl(modalExcluir?.valor)}? Não dá pra desfazer.`
           }
           onConfirmar={() => handleExcluir("unico")}
           onCancelar={() => setModalExcluir(null)}

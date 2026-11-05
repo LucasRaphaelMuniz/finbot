@@ -697,14 +697,19 @@ function CardConta({
         </BotaoMover>
       )}
 
+      {/* Com detalhe (fatura do cartão), o bloco vira <button> de verdade
+          — antes era uma div com onClick, fora do Tab e invisível pra
+          leitor de tela (auditoria de UX, 05/11/2026). */}
       <CardInfo
+        as={temDetalhe ? "button" : "div"}
+        type={temDetalhe ? "button" : undefined}
+        $clicavel={temDetalhe}
         onClick={temDetalhe ? () => onAbrirDetalhe(conta.chave) : undefined}
-        style={temDetalhe ? { cursor: "pointer" } : undefined}
         title={temDetalhe ? "Ver despesas do cartão neste mês" : undefined}
       >
         <CardTitulo>
           {conta.descricao}
-          {temDetalhe && <span style={{ opacity: 0.5, fontWeight: 400 }}> ›</span>}
+          {temDetalhe && <span aria-hidden="true" style={{ opacity: 0.5, fontWeight: 400 }}> ›</span>}
         </CardTitulo>
         <CardDetalhe>
           {conta.tipo === "entrada"
@@ -716,6 +721,7 @@ function CardConta({
       {editando ? (
         <InputValor
           autoFocus
+          aria-label={`Valor de ${conta.descricao}`}
           inputMode="decimal"
           value={texto}
           onChange={(e) => setTexto(e.target.value.replace(/[^\d.,]/g, ""))}
@@ -731,6 +737,7 @@ function CardConta({
           $editavel={podeEditarValor}
           onClick={abrirEdicao}
           title={podeEditarValor ? "Clique para editar" : undefined}
+          aria-label={podeEditarValor ? `Editar valor de ${conta.descricao}: ${brl(valorExibido)}` : undefined}
         >
           {/* Fatura paga com valor diferente do que fechou: mostra os dois,
               porque a diferença (rotativo, desconto) é justamente o que

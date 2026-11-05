@@ -10,7 +10,8 @@ export const Header = styled.div`
 `;
 
 export const Abas = styled.div`
-  display: flex;
+  display: inline-flex;
+  margin-bottom: ${({ theme }) => theme.spacing(4)};
   gap: ${({ theme }) => theme.spacing(1)};
   background: ${({ theme }) => theme.colors.surfaceAlt};
   border-radius: ${({ theme }) => theme.radius.sm};
@@ -18,7 +19,7 @@ export const Abas = styled.div`
 `;
 
 export const Aba = styled.button`
-  background: ${({ theme, $ativa }) => ($ativa ? theme.colors.primary : "transparent")};
+  background: ${({ theme, $ativa }) => ($ativa ? theme.colors.primarySolid : "transparent")};
   color: ${({ theme, $ativa }) => ($ativa ? "white" : theme.colors.textMuted)};
   border: none;
   border-radius: ${({ theme }) => theme.radius.sm};
@@ -29,17 +30,33 @@ export const Aba = styled.button`
 
 export const Filtros = styled.div`
   display: flex;
+  align-items: flex-end;
   gap: ${({ theme }) => theme.spacing(3)};
   flex-wrap: wrap;
   margin-bottom: ${({ theme }) => theme.spacing(4)};
+`;
 
-  > * {
-    min-width: 160px;
+// Label + select de um filtro. flex-basis 200px / máx 280px: no desktop
+// cabem lado a lado; abaixo de ~440px cada um ocupa a linha inteira.
+export const FiltroCampo = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: ${({ theme }) => theme.spacing(1)};
+  flex: 1 1 200px;
+  max-width: 280px;
+
+  label {
+    font-size: 13px;
+    color: ${({ theme }) => theme.colors.textMuted};
+  }
+
+  @media (max-width: 480px) {
+    max-width: none;
   }
 `;
 
 export const BotaoNovo = styled.button`
-  background: ${({ theme }) => theme.colors.primary};
+  background: ${({ theme }) => theme.colors.primarySolid};
   color: white;
   border: none;
   border-radius: ${({ theme }) => theme.radius.sm};
@@ -88,7 +105,7 @@ export const Erro = styled.div`
 `;
 
 export const SalvarBtn = styled.button`
-  background: ${({ theme }) => theme.colors.primary};
+  background: ${({ theme }) => theme.colors.primarySolid};
   color: white;
   border: none;
   border-radius: ${({ theme }) => theme.radius.sm};

@@ -199,7 +199,7 @@ function NomeForm({ onSalvo, onErro }) {
     <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <Field>
         <label htmlFor="nome-conta">Nome</label>
-        <input id="nome-conta" value={nome} onChange={(e) => setNome(e.target.value)} />
+        <input id="nome-conta" autoComplete="name" value={nome} onChange={(e) => setNome(e.target.value)} />
       </Field>
       <SalvarBtn type="submit" disabled={enviando} style={{ width: "fit-content" }}>
         {enviando ? "Salvando..." : "Salvar nome"}
@@ -233,7 +233,7 @@ function SenhaForm({ onSalvo, onErro }) {
     <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <Field>
         <label htmlFor="nova-senha">Nova senha</label>
-        <input id="nova-senha" type="password" value={senha} onChange={(e) => setSenha(e.target.value)} />
+        <input id="nova-senha" type="password" autoComplete="new-password" value={senha} onChange={(e) => setSenha(e.target.value)} />
       </Field>
       <SalvarBtn type="submit" disabled={enviando} style={{ width: "fit-content" }}>
         {enviando ? "Salvando..." : "Alterar senha"}
@@ -307,6 +307,7 @@ function ExclusaoConta({ ehMaster, emailUsuario, onExcluida }) {
         <input
           id="senha-exclusao"
           type="password"
+          autoComplete="current-password"
           value={senha}
           onChange={(e) => setSenha(e.target.value)}
         />

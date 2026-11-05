@@ -11,7 +11,7 @@
 // Fase 4.3 (ainda não construída): GET /api/grupo responde 404 com
 // {"erro": "sem_grupo"} nesse caso. Se a Fase 4.3 adotar outro contrato,
 // ajustar só o catch abaixo.
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { useTema } from "@/components/ThemeRegistry";
@@ -34,6 +34,13 @@ export default function AppLayout({ children }) {
   // breakpoint de 860px). No desktop esse estado é irrelevante: a Nav
   // ignora `aberta` via CSS e fica sempre visível.
   const [menuAberto, setMenuAberto] = useState(false);
+  const menuBtnRef = useRef(null);
+  // Fecha a gaveta e devolve o foco pro botão ☰ (Esc ou clique no fundo).
+  const fecharMenu = useCallback(() => {
+    if (!menuAberto) return;
+    setMenuAberto(false);
+    menuBtnRef.current?.focus();
+  }, [menuAberto]);
 
   useEffect(() => {
     if (!loading && !autenticado) {
@@ -79,9 +86,9 @@ export default function AppLayout({ children }) {
 
   return (
     <div style={{ display: "flex" }}>
-      <Sidebar aberta={menuAberto} onFechar={() => setMenuAberto(false)} />
+      <Sidebar aberta={menuAberto} onFechar={fecharMenu} />
       <div style={{ flex: 1, minHeight: "100vh", minWidth: 0 }}>
-        <Header onAbrirMenu={() => setMenuAberto(true)} />
+        <Header ref={menuBtnRef} menuAberto={menuAberto} onAbrirMenu={() => setMenuAberto(true)} />
         <main style={{ padding: 24 }}>{children}</main>
       </div>
       {tutorialVisto === false && (

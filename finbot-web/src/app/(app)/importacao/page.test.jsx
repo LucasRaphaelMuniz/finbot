@@ -3,7 +3,7 @@
 // pode ir pro banco sem passar pela revisão explícita (checkbox "incluir" +
 // categoria escolhida) — ver services/importacao.py:confirmar_importacao e
 // o comentário no topo de page.jsx ("Nada entra no banco antes do passo 3").
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@/test-utils";
 import userEvent from "@testing-library/user-event";
 import ImportacaoPage from "./page";
 import api from "@/services/api";

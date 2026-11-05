@@ -90,6 +90,24 @@ export const Card = styled.article`
 export const CardInfo = styled.div`
   flex: 1;
   min-width: 0;
+
+  /* Variante <button> (fatura com detalhe): zera o visual de botão do
+     global.js pra continuar parecendo o mesmo bloco de texto. */
+  ${({ $clicavel, theme }) => $clicavel && `
+    background: none;
+    border: none;
+    border-radius: ${theme.radius.sm};
+    padding: 0;
+    text-align: left;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+
+    &:hover:not(:disabled) {
+      border-color: transparent;
+      text-decoration: underline;
+    }
+  `}
 `;
 
 export const CardTitulo = styled.div`
@@ -112,9 +130,14 @@ export const CardValor = styled.button`
     ${({ theme, $editavel }) => ($editavel ? theme.colors.border : "transparent")};
   border-radius: ${({ theme }) => theme.radius.sm};
   padding: 2px 6px;
+  min-height: 32px;
   font-size: 14px;
   font-weight: 600;
   font-family: inherit;
+
+  @media (max-width: 640px) {
+    min-height: 44px;
+  }
   color: ${({ theme }) => theme.colors.text};
   cursor: ${({ $editavel }) => ($editavel ? "text" : "default")};
   text-align: right;
@@ -132,7 +155,7 @@ export const CardValor = styled.button`
 
 export const ValorRiscado = styled.span`
   display: block;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 400;
   text-decoration: line-through;
   color: ${({ theme }) => theme.colors.textMuted};
@@ -178,8 +201,10 @@ export const Indicador = styled.span`
   height: 18px;
   border-radius: 50%;
   background: ${({ theme, $pago }) => ($pago ? theme.colors.success : theme.colors.danger)};
-  color: #fff;
-  font-size: 11px;
+  /* Texto escuro fixo: branco sobre o verde dava 2,13:1; #0f1115 passa
+     de 5:1 sobre success/danger nos dois temas. */
+  color: #0f1115;
+  font-size: 12px;
   font-weight: 700;
   line-height: 1;
 `;
@@ -291,6 +316,8 @@ export const SeletorCategoria = styled.select`
   &:focus {
     outline: none;
     border-color: ${({ theme }) => theme.colors.primary};
+    /* anel de foco: só a borda de 1px mudando de cor era sutil demais */
+    box-shadow: 0 0 0 3px ${({ theme }) => theme.colors.primary}59;
   }
 `;
 
@@ -348,6 +375,8 @@ export const CampoDescricao = styled.input`
   &:focus {
     outline: none;
     border-color: ${({ theme }) => theme.colors.primary};
+    /* anel de foco: só a borda de 1px mudando de cor era sutil demais */
+    box-shadow: 0 0 0 3px ${({ theme }) => theme.colors.primary}59;
   }
 `;
 
@@ -366,6 +395,8 @@ export const CampoDia = styled.input`
   &:focus {
     outline: none;
     border-color: ${({ theme }) => theme.colors.primary};
+    /* anel de foco: só a borda de 1px mudando de cor era sutil demais */
+    box-shadow: 0 0 0 3px ${({ theme }) => theme.colors.primary}59;
   }
 `;
 

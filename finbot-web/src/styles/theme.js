@@ -16,6 +16,10 @@ const CORES = {
     text: "#e8eaed",
     textMuted: "#9aa0ac",
     primary: "#4f8cff",
+    // Fundo de botão sólido com texto branco: #4f8cff + branco dá 3,22:1
+    // (reprova WCAG AA 4,5:1). `primary` continua pra texto/link/borda
+    // sobre o fundo escuro (5,4:1); botão usa este tom mais fechado (5,17:1).
+    primarySolid: "#2563eb",
     success: "#3ec97c",
     warning: "#f2b84b",
     danger: "#f2545b",
@@ -32,7 +36,10 @@ const CORES = {
     border: "#dbdfe6",
     text: "#181b20",
     textMuted: "#5b6270",
-    primary: "#3f7de0",
+    // #3f7de0 dava 3,69:1 como texto sobre o bg claro — escurecido pra
+    // passar AA tanto como link quanto como fundo de botão.
+    primary: "#2563eb",
+    primarySolid: "#2563eb",
     success: "#1f9d5e",
     warning: "#b8790a",
     danger: "#d8383f",

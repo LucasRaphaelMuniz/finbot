@@ -19,13 +19,35 @@ export const Titulo = styled.h2`
   font-size: 16px;
 `;
 
+// flex-wrap: no celular o botão desce pra linha de baixo em vez de vazar
+// pela borda do card (era o que acontecia com "Salvar" em 375px).
 export const NomeGrupoForm = styled.form`
   display: flex;
+  flex-wrap: wrap;
   gap: ${({ theme }) => theme.spacing(2)};
   align-items: center;
 `;
 
+export const CampoTelefone = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: ${({ theme }) => theme.spacing(1)};
+  margin-bottom: ${({ theme }) => theme.spacing(5)};
+
+  > label {
+    font-size: 13px;
+    color: ${({ theme }) => theme.colors.textMuted};
+  }
+`;
+
+export const ErroCampo = styled.p`
+  font-size: 13px;
+  color: ${({ theme }) => theme.colors.danger};
+`;
+
 export const InputInline = styled.input`
+  flex: 1 1 200px;
+  min-width: 0;
   background: ${({ theme }) => theme.colors.surfaceAlt};
   border: 1px solid ${({ theme }) => theme.colors.border};
   border-radius: ${({ theme }) => theme.radius.sm};
@@ -33,7 +55,7 @@ export const InputInline = styled.input`
 `;
 
 export const Botao = styled.button`
-  background: ${({ theme }) => theme.colors.primary};
+  background: ${({ theme }) => theme.colors.primarySolid};
   color: white;
   border: none;
   border-radius: ${({ theme }) => theme.radius.sm};
@@ -42,7 +64,7 @@ export const Botao = styled.button`
   font-weight: 600;
   white-space: nowrap;
 
-  &:hover {
+  &:hover:not(:disabled) {
     opacity: 0.9;
   }
 `;

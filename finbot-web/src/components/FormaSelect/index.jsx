@@ -5,7 +5,7 @@
 import { useApi } from "@/hooks/useApi";
 import { Select } from "@/components/CategoriaSelect/styles";
 
-export default function FormaSelect({ value, onChange, incluirTodas = false, id }) {
+export default function FormaSelect({ value, onChange, incluirTodas = false, id, ...rest }) {
   const { dados, loading } = useApi("/formas");
   const itens = dados?.itens || [];
 
@@ -15,6 +15,7 @@ export default function FormaSelect({ value, onChange, incluirTodas = false, id 
       value={value ?? ""}
       onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
       disabled={loading}
+      {...rest}
     >
       {incluirTodas && <option value="">Todas as formas</option>}
       {!incluirTodas && <option value="" disabled>Selecione...</option>}

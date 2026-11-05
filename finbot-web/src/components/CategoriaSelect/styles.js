@@ -10,5 +10,7 @@ export const Select = styled.select`
   &:focus {
     outline: none;
     border-color: ${({ theme }) => theme.colors.primary};
+    /* anel de foco: só a borda de 1px mudando de cor era sutil demais */
+    box-shadow: 0 0 0 3px ${({ theme }) => theme.colors.primary}59;
   }
 `;

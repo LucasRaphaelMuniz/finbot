@@ -1,13 +1,14 @@
 "use client";
 
 // components/DataTable — tabela genérica usada por todas as telas de CRUD
-// da Fase 5. `columns`: [{key, label, render?(row)}]. `acoes(row)` retorna
+// da Fase 5. `columns`: [{key, label, render?(row), numerico?}] —
+// `numerico` alinha a coluna à direita com algarismos tabulares (valores
+// em R$ comparáveis de relance). `acoes(row)` retorna
 // os botões de ação da linha (editar/excluir), renderizados pelo chamador
 // pra não engessar quais ações cada tela precisa.
 import { useMemo, useState } from "react";
 import EmptyState from "@/components/EmptyState";
-import Loading from "@/components/Loading";
-import { TableWrap, Table, Th, Td, Tr, AcoesTd, AcoesFlex } from "./styles";
+import { TableWrap, Table, Th, Td, Tr, AcoesTd, AcoesFlex, OrdenarBtn, Skeleton } from "./styles";
 
 // `linhaAtenuada(row)`: opcional, marca a linha inteira como "prevista/não
 // definitiva" (itálico + opacidade reduzida — ver styles.js) em vez de cada
@@ -56,7 +57,28 @@ export default function DataTable({ columns, rows, loading, vazio, acoes, linhaA
     });
   }
 
-  if (loading) return <Loading />;
+  // Skeleton com a forma da tabela (auditoria de UX) em vez de spinner
+  // solto: a página já mostra onde os dados vão aparecer enquanto a API
+  // responde. aria-busy + rótulo pra leitor de tela.
+  if (loading) {
+    return (
+      <TableWrap aria-busy="true" aria-label="Carregando">
+        <Table>
+          <tbody>
+            {[0, 1, 2, 3, 4].map((i) => (
+              <Tr key={i}>
+                {columns.map((col) => (
+                  <Td key={col.key} data-label={col.label}>
+                    <Skeleton />
+                  </Td>
+                ))}
+              </Tr>
+            ))}
+          </tbody>
+        </Table>
+      </TableWrap>
+    );
+  }
   if (!rows || rows.length === 0) {
     return <EmptyState titulo={vazio?.titulo || "Nada por aqui ainda"} descricao={vazio?.descricao} acao={vazio?.acao} />;
   }
@@ -68,10 +90,23 @@ export default function DataTable({ columns, rows, loading, vazio, acoes, linhaA
           <tr>
             {columns.map((col) => {
               const ordenavel = col.sortable !== false;
+              const ativa = sort.key === col.key;
               return (
-                <Th key={col.key} $ordenavel={ordenavel} onClick={() => alternarOrdenacao(col)}>
-                  {col.label}
-                  {sort.key === col.key ? (sort.dir === "asc" ? " ▲" : " ▼") : ""}
+                <Th
+                  key={col.key}
+                  $numerico={col.numerico}
+                  aria-sort={ativa ? (sort.dir === "asc" ? "ascending" : "descending") : undefined}
+                >
+                  {/* Botão dentro do <th> (antes: onClick no próprio th) —
+                      ordenar passa a funcionar por Tab/Enter, não só mouse. */}
+                  {ordenavel ? (
+                    <OrdenarBtn type="button" onClick={() => alternarOrdenacao(col)}>
+                      {col.label}
+                      {ativa ? (sort.dir === "asc" ? " ▲" : " ▼") : ""}
+                    </OrdenarBtn>
+                  ) : (
+                    col.label
+                  )}
                 </Th>
               );
             })}
@@ -81,8 +116,12 @@ export default function DataTable({ columns, rows, loading, vazio, acoes, linhaA
         <tbody>
           {linhas.map((row) => (
             <Tr key={row.id} $atenuada={linhaAtenuada ? linhaAtenuada(row) : false}>
+              {/* data-label alimenta o layout em card do mobile (styles.js):
+                  abaixo de 640px cada célula vira "Rótulo .... valor". */}
               {columns.map((col) => (
-                <Td key={col.key}>{col.render ? col.render(row) : row[col.key]}</Td>
+                <Td key={col.key} $numerico={col.numerico} data-label={col.label}>
+                  {col.render ? col.render(row) : row[col.key]}
+                </Td>
               ))}
               {acoes && <AcoesTd><AcoesFlex>{acoes(row)}</AcoesFlex></AcoesTd>}
             </Tr>

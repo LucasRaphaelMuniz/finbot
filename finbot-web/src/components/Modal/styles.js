@@ -26,9 +26,43 @@ export const Box = styled.div`
   width: min(480px, 90vw);
   max-height: 85vh;
   overflow-y: auto;
+
+  &:focus {
+    outline: none;
+  }
+`;
+
+export const Cabecalho = styled.div`
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: ${({ theme }) => theme.spacing(3)};
+  margin-bottom: ${({ theme }) => theme.spacing(4)};
 `;
 
 export const Titulo = styled.h2`
   font-size: 16px;
-  margin-bottom: ${({ theme }) => theme.spacing(4)};
+`;
+
+// Saída visível além do Esc/clique fora — antes não existia nenhuma.
+// margin-left:auto mantém à direita mesmo quando o modal não tem título.
+export const FecharBtn = styled.button`
+  margin-left: auto;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  line-height: 1;
+  background: transparent;
+  border: 1px solid transparent;
+  color: ${({ theme }) => theme.colors.textMuted};
+  flex-shrink: 0;
+
+  &:hover:not(:disabled) {
+    color: ${({ theme }) => theme.colors.text};
+    border-color: ${({ theme }) => theme.colors.border};
+  }
 `;
