@@ -108,7 +108,7 @@ export default function GrupoPage() {
 
   return (
     <div>
-      <h1 style={{ fontSize: 20, marginBottom: 16 }}>Grupo</h1>
+      <h2 style={{ fontSize: 17, marginBottom: 16 }}>Grupo</h2>
       <Secao>
         <SecaoHeader>
           <Titulo id="titulo-nome-grupo">Nome do grupo</Titulo>

@@ -6,8 +6,20 @@
 // só a ordem, os rótulos ("Dashboard" virou "Início") e os ícones.
 import {
   House, CalendarCheck, ArrowLeftRight, Repeat, CreditCard, Upload,
-  Tags, Wallet, Users, Sparkles, UserCog,
+  Settings,
 } from "lucide-react";
+
+// Abas de Configurações (layout em app/(app)/(ajustes)). As 5 telas
+// continuam nas MESMAS URLs: "(ajustes)" é route group do Next, só junta
+// as pastas debaixo de um layout com as abas, sem entrar no caminho —
+// links antigos (política de privacidade, favoritos) seguem valendo.
+export const ABAS_AJUSTES = [
+  { href: "/conta", label: "Conta" },
+  { href: "/categorias", label: "Categorias" },
+  { href: "/formas", label: "Formas de pagamento" },
+  { href: "/grupo", label: "Grupo" },
+  { href: "/planos", label: "Plano" },
+];
 
 export const GRUPOS_NAV = [
   {
@@ -27,17 +39,28 @@ export const GRUPOS_NAV = [
     ],
   },
   {
+    // Fase 4 (05/11/2026): Conta, Categorias, Formas, Grupo e Plano viraram
+    // abas de uma tela só (app/(app)/(ajustes)). No menu fica 1 item, que
+    // continua aceso em qualquer uma das 5 rotas (`ativoEm`).
     titulo: "Ajustes",
     itens: [
-      { href: "/categorias", label: "Categorias", Icone: Tags },
-      { href: "/formas", label: "Formas de pagamento", Icone: Wallet },
-      { href: "/grupo", label: "Grupo", Icone: Users },
-      { href: "/planos", label: "Planos", Icone: Sparkles },
-      { href: "/conta", label: "Conta", Icone: UserCog },
+      {
+        href: "/conta",
+        label: "Configurações",
+        Icone: Settings,
+        ativoEm: ABAS_AJUSTES.map((a) => a.href),
+      },
     ],
   },
 ];
 
-export function rotaAtiva(pathname, href) {
-  return !!pathname && (pathname === href || pathname.startsWith(`${href}/`));
+function casa(pathname, href) {
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+// `alvo`: href (string) ou item do menu ({ href, ativoEm? }).
+export function rotaAtiva(pathname, alvo) {
+  if (!pathname || !alvo) return false;
+  if (typeof alvo === "string") return casa(pathname, alvo);
+  return (alvo.ativoEm || [alvo.href]).some((h) => casa(pathname, h));
 }

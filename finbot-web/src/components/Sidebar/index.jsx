@@ -64,8 +64,9 @@ export default function Sidebar({ aberta = false, onFechar }) {
         {GRUPOS_NAV.map((grupo) => (
           <Grupo key={grupo.titulo} role="group" aria-labelledby={`nav-${grupo.titulo}`}>
             <GrupoTitulo id={`nav-${grupo.titulo}`}>{grupo.titulo}</GrupoTitulo>
-            {grupo.itens.map(({ href, label, Icone }) => {
-              const ativo = rotaAtiva(pathname, href);
+            {grupo.itens.map((item) => {
+              const { href, label, Icone } = item;
+              const ativo = rotaAtiva(pathname, item);
               return (
                 <Link key={href} href={href} passHref legacyBehavior>
                   {/* onClick fecha a gaveta ao navegar no celular; no

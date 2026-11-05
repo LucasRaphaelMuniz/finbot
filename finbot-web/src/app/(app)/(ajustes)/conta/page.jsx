@@ -31,7 +31,7 @@ export default function ContaPage() {
 
   return (
     <div style={{ maxWidth: 420, display: "flex", flexDirection: "column", gap: 32 }}>
-      <h1 style={{ fontSize: 20 }}>Conta</h1>
+      <h2 style={{ fontSize: 17 }}>Conta</h2>
 
       <section>
         <p style={{ opacity: 0.7, fontSize: 13 }}>E-mail</p>

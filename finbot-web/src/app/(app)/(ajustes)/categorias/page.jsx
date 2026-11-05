@@ -51,7 +51,7 @@ export default function CategoriasPage() {
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 24 }}>
-        <h1 style={{ fontSize: 20 }}>Categorias</h1>
+        <h2 style={{ fontSize: 17 }}>Categorias</h2>
         <SalvarBtn type="button" style={{ padding: "10px 16px" }} onClick={() => setModalCategoria(null)}>+ Nova categoria</SalvarBtn>
       </div>
 
