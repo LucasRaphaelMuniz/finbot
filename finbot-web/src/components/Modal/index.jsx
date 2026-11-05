@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useId, useRef } from "react";
+import { useId, useRef } from "react";
+import { useFocoPreso } from "@/hooks/useFocoPreso";
 import { Overlay, Box, Cabecalho, Titulo, FecharBtn } from "./styles";
 
 // components/Modal — shell genérico usado por todas as telas de CRUD da
@@ -25,60 +26,12 @@ import { Overlay, Box, Cabecalho, Titulo, FecharBtn } from "./styles";
 // foco entra no diálogo ao abrir (no elemento marcado com
 // data-autofocus, ou no primeiro focável); Tab/Shift+Tab ficam presos
 // dentro; Esc fecha; ao fechar, o foco volta pro elemento que abriu.
-const FOCAVEIS =
-  'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-
 export default function Modal({ aberto, titulo, onFechar, children, largura }) {
   const idTitulo = useId();
   const boxRef = useRef(null);
-  // onFechar costuma ser uma arrow nova a cada render do pai — guardar em
-  // ref evita reinstalar o listener (e re-focar) a cada digitação no form.
-  const onFecharRef = useRef(onFechar);
-  onFecharRef.current = onFechar;
-
-  useEffect(() => {
-    if (!aberto) return undefined;
-    const anterior = document.activeElement;
-    const box = boxRef.current;
-
-    const alvoInicial =
-      box?.querySelector("[data-autofocus]") ||
-      [...(box?.querySelectorAll(FOCAVEIS) || [])].find((el) => !el.dataset.fechar) ||
-      box;
-    // Respeita `autoFocus` de algum campo filho (React já focou no commit).
-    if (!box?.contains(document.activeElement)) alvoInicial?.focus();
-
-    function onKeyDown(e) {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        onFecharRef.current?.();
-        return;
-      }
-      if (e.key !== "Tab" || !box) return;
-      const focaveis = [...box.querySelectorAll(FOCAVEIS)].filter((el) => el.offsetParent !== null);
-      if (focaveis.length === 0) {
-        e.preventDefault();
-        return;
-      }
-      const primeiro = focaveis[0];
-      const ultimo = focaveis[focaveis.length - 1];
-      if (e.shiftKey && (document.activeElement === primeiro || !box.contains(document.activeElement))) {
-        e.preventDefault();
-        ultimo.focus();
-      } else if (!e.shiftKey && (document.activeElement === ultimo || !box.contains(document.activeElement))) {
-        e.preventDefault();
-        primeiro.focus();
-      }
-    }
-
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      if (anterior && typeof anterior.focus === "function" && document.contains(anterior)) {
-        anterior.focus();
-      }
-    };
-  }, [aberto]);
+  // foco preso, Esc e retorno de foco: hooks/useFocoPreso (compartilhado
+  // com components/Painel).
+  useFocoPreso(aberto, boxRef, onFechar);
 
   if (!aberto) return null;
   return (
